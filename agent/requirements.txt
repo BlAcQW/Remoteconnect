@@ -7,5 +7,6 @@ pyperclip==1.9.0
 python-dotenv==1.0.1
 # Optional but recommended on real desktop agents — used by agent.publisher_daily
 # to publish the screen as a Daily.co camera track. Native binary; install may
-# require build tooling on some Linux distros.
-daily-python==0.27.0
+# require build tooling on some Linux distros. No Windows wheels are
+# published, so we skip it there (agent.publisher_daily handles absence).
+daily-python==0.27.0 ; sys_platform != "win32"

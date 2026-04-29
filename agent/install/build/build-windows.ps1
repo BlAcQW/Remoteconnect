@@ -23,12 +23,27 @@ $entry = Join-Path $repo 'agent\install\build\agent_entry.py'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
-# Set up Python venv with PyInstaller + agent deps
+# Set up Python venv with PyInstaller + agent deps.
+#
+# IMPORTANT: $ErrorActionPreference='Stop' does NOT trap non-zero native
+# exit codes from the `&` call operator on Windows PowerShell, so an
+# earlier failed `pip install` (e.g., daily-python having no Windows
+# wheels) silently produced an empty venv and PyInstaller went on to
+# build a binary missing every Python dependency. Explicit
+# $LASTEXITCODE guards make the build halt loudly instead.
+function Invoke-CheckedNative {
+    param([string]$What, [scriptblock]$Block)
+    & $Block
+    if ($LASTEXITCODE -ne 0) {
+        throw "$What failed with exit code $LASTEXITCODE"
+    }
+}
+
 if (-not (Test-Path "$workDir\venv\Scripts\python.exe")) {
-  py -3 -m venv "$workDir\venv"
-  & "$workDir\venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
-  & "$workDir\venv\Scripts\pip.exe" install -r (Join-Path $repo 'agent\requirements.txt') --quiet
-  & "$workDir\venv\Scripts\pip.exe" install "pyinstaller>=6.15.0" --quiet
+  Invoke-CheckedNative "create venv"     { py -3 -m venv "$workDir\venv" }
+  Invoke-CheckedNative "upgrade pip"     { & "$workDir\venv\Scripts\python.exe" -m pip install --upgrade pip }
+  Invoke-CheckedNative "install agent reqs" { & "$workDir\venv\Scripts\pip.exe" install -r (Join-Path $repo 'agent\requirements.txt') }
+  Invoke-CheckedNative "install pyinstaller" { & "$workDir\venv\Scripts\pip.exe" install "pyinstaller>=6.15.0" }
 }
 
 # Build
