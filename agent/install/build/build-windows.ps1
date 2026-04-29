@@ -28,7 +28,7 @@ if (-not (Test-Path "$workDir\venv\Scripts\python.exe")) {
   py -3 -m venv "$workDir\venv"
   & "$workDir\venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
   & "$workDir\venv\Scripts\pip.exe" install -r (Join-Path $repo 'agent\requirements.txt') --quiet
-  & "$workDir\venv\Scripts\pip.exe" install pyinstaller==6.10.0 --quiet
+  & "$workDir\venv\Scripts\pip.exe" install "pyinstaller>=6.15.0" --quiet
 }
 
 # Build

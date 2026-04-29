@@ -22,7 +22,7 @@ if [ ! -d "${WORK_DIR}/venv" ]; then
   python3 -m venv "${WORK_DIR}/venv"
   "${WORK_DIR}/venv/bin/pip" install --quiet --upgrade pip
   "${WORK_DIR}/venv/bin/pip" install --quiet -r "${ROOT}/agent/requirements.txt"
-  "${WORK_DIR}/venv/bin/pip" install --quiet pyinstaller==6.10.0
+  "${WORK_DIR}/venv/bin/pip" install --quiet "pyinstaller>=6.15.0"
 fi
 
 "${WORK_DIR}/venv/bin/pyinstaller" \
