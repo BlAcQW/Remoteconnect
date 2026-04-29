@@ -1,36 +1,206 @@
-"""PyInstaller entrypoint for the standalone agent binary.
+"""PyInstaller entrypoint with installer-style GUI wrapper.
 
-When the customer runs the bundled binary, it:
-  1. Reads JOIN_TOKEN, SERVER_HTTP_URL, SERVER_WS_URL from environment or
-     from config.json (unset on first run — the customer arrives via
-     a Quick Connect link that sets them).
-  2. If a config.json doesn't exist yet AND a JOIN_TOKEN is provided, the
-     agent registers, the backend redeems the token, and persists creds.
-  3. Subsequent runs re-use the persisted creds.
+When the customer runs the bundled binary, this entry:
+  1. Pops a small dark-themed window that looks like an installer
+     (title, subtitle, animated status line). Hides the cmd window
+     entirely on Windows when built with --noconsole.
+  2. Runs the agent's asyncio event loop in a background thread.
+  3. Watches the agent's logger and reflects key transitions
+     ("Registering...", "Registered", "WebSocket connected") into
+     the status label so the customer sees progress.
+  4. On crash, surfaces a clean error dialog with the path to the
+     log file rather than dumping a Python stack trace into a cmd
+     window the customer will never know how to read.
 
-For the Quick Connect flow, the server-side fallback installer wraps this
-binary in a tiny script that sets JOIN_TOKEN env before launching it. Once
-we have proper PyInstaller binaries shipping, the binary will read its
-embedded JOIN_TOKEN from a build-time sidecar (TODO).
+NOTE: ``import asyncio`` is at module scope on purpose — this is what
+tells PyInstaller's static analyzer to bundle the asyncio stdlib package.
+A ``from agent.agent import asyncio`` (which is what the previous version
+did) is interpreted as "fetch the asyncio attribute from agent.agent",
+which does NOT trigger asyncio bundling and yields ``ModuleNotFoundError:
+No module named 'asyncio'`` at runtime.
 """
 from __future__ import annotations
 
+import asyncio  # noqa: F401  — required for PyInstaller to bundle asyncio
+import logging
 import os
 import sys
+import tempfile
+import threading
+import tkinter as tk
+import traceback
+from tkinter import messagebox
+
+LOG_PATH = os.path.join(tempfile.gettempdir(), "remoteconnect-agent.log")
+
+logging.basicConfig(
+    filename=LOG_PATH,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+
+# Keywords in agent log lines → friendly UI status string.
+# Order matters: first match wins.
+STATUS_RULES: list[tuple[str, str]] = [
+    ("Loaded existing credentials", "Resuming session"),
+    ("Using Quick Connect token", "Activating invite"),
+    ("Registering with", "Registering this computer"),
+    ("Registered machine_id", "Registered with server"),
+    ("WebSocket connected", "Connected — waiting for technician"),
+    ("Heartbeat", "Connected — waiting for technician"),
+    ("consent: session", "Technician requesting access"),
+]
+
+
+class InstallerWindow:
+    """Minimal dark-themed window that masquerades as an installer."""
+
+    def __init__(self) -> None:
+        self.root = tk.Tk()
+        self.root.title("RemoteConnect Setup")
+        self.root.geometry("440x240")
+        self.root.resizable(False, False)
+        try:
+            self.root.attributes("-topmost", True)
+            self.root.after(800, lambda: self.root.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+        self.root.configure(bg="#0e1117")
+
+        tk.Label(
+            self.root,
+            text="RemoteConnect",
+            font=("Segoe UI", 18, "bold"),
+            fg="#ffffff",
+            bg="#0e1117",
+        ).pack(pady=(28, 4))
+
+        tk.Label(
+            self.root,
+            text="Setting up secure remote support…",
+            font=("Segoe UI", 10),
+            fg="#9aa0a6",
+            bg="#0e1117",
+        ).pack()
+
+        self._status_text = tk.StringVar(value="Connecting to server")
+        tk.Label(
+            self.root,
+            textvariable=self._status_text,
+            font=("Segoe UI", 11),
+            fg="#4ea1ff",
+            bg="#0e1117",
+        ).pack(pady=(34, 6))
+
+        self._detail_text = tk.StringVar(value="This window will stay open for the duration of the session.")
+        tk.Label(
+            self.root,
+            textvariable=self._detail_text,
+            font=("Segoe UI", 9),
+            fg="#5f6368",
+            bg="#0e1117",
+            wraplength=400,
+            justify="center",
+        ).pack()
+
+        self._dots = 0
+        self._tick_dots()
+
+    # animated trailing dots so the user feels something is happening
+    def _tick_dots(self) -> None:
+        self._dots = (self._dots + 1) % 4
+        base = self._status_text.get().rstrip(".")
+        self._status_text.set(base + ("." * self._dots))
+        self.root.after(450, self._tick_dots)
+
+    def set_status(self, message: str, detail: str | None = None) -> None:
+        def _apply() -> None:
+            self._status_text.set(message)
+            if detail is not None:
+                self._detail_text.set(detail)
+        self.root.after(0, _apply)
+
+    def show_error_and_close(self, message: str) -> None:
+        def _apply() -> None:
+            messagebox.showerror("RemoteConnect", message)
+            self.root.destroy()
+        self.root.after(0, _apply)
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+class GuiLogHandler(logging.Handler):
+    """Listens to the agent's logger and updates the installer window."""
+
+    def __init__(self, window: InstallerWindow) -> None:
+        super().__init__(level=logging.INFO)
+        self.window = window
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return
+        for needle, status in STATUS_RULES:
+            if needle in msg:
+                self.window.set_status(status, f"Logs: {LOG_PATH}")
+                return
+
+
+def _agent_thread(window: InstallerWindow) -> None:
+    """Background worker: runs the agent's asyncio event loop."""
+    try:
+        # Importing here keeps Tk responsive during initial paint.
+        from agent.agent import main as agent_main
+
+        # Wire log → GUI status
+        logging.getLogger("agent").addHandler(GuiLogHandler(window))
+        logging.getLogger().addHandler(GuiLogHandler(window))
+
+        window.set_status("Connecting to server", f"Logs: {LOG_PATH}")
+        asyncio.run(agent_main())
+    except Exception as exc:
+        logging.exception("agent crashed")
+        window.show_error_and_close(
+            f"RemoteConnect failed to start.\n\n"
+            f"{type(exc).__name__}: {exc}\n\n"
+            f"Logs were saved to:\n{LOG_PATH}"
+        )
+
+
+def _run_console_only() -> int:
+    """Headless fallback (no display, or REMOTECONNECT_NO_GUI=1)."""
+    from agent.agent import main as agent_main
+
+    asyncio.run(agent_main())
+    return 0
 
 
 def main() -> int:
-    # Detect whether we're a frozen PyInstaller bundle vs running from source.
-    # When frozen, the agent module is bundled inside; --onefile extracts to
-    # a temp dir at sys._MEIPASS — both paths still work because the entry
-    # imports the package normally.
-    from agent.agent import main as agent_main, asyncio
+    if os.getenv("REMOTECONNECT_NO_GUI"):
+        return _run_console_only()
     try:
-        asyncio.run(agent_main())
-        return 0
-    except KeyboardInterrupt:
-        return 0
+        window = InstallerWindow()
+    except tk.TclError:
+        # No display available (headless Linux, etc.) — run without UI.
+        return _run_console_only()
+    worker = threading.Thread(target=_agent_thread, args=(window,), daemon=True)
+    worker.start()
+    window.run()
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        # Last-ditch: write any unhandled error so the user can find it.
+        try:
+            with open(LOG_PATH, "a", encoding="utf-8") as fp:
+                fp.write("\n=== unhandled top-level error ===\n")
+                fp.write(traceback.format_exc())
+        except OSError:
+            pass
+        sys.exit(1)

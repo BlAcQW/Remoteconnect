@@ -32,13 +32,23 @@ if (-not (Test-Path "$workDir\venv\Scripts\python.exe")) {
 }
 
 # Build
+#
+# --noconsole         hides the cmd window so the customer only sees the
+#                     installer-style Tk window from agent_entry.py.
+# --hidden-import asyncio  belt-and-suspenders: PyInstaller's analyzer
+#                     should pick up `import asyncio` from agent_entry,
+#                     but state this explicitly so we don't ship a binary
+#                     that crashes with "No module named 'asyncio'" if
+#                     analysis ever misses it again.
 & "$workDir\venv\Scripts\pyinstaller.exe" `
   --onefile `
+  --noconsole `
   --name RemoteConnectAgent-win `
   --distpath $outDir `
   --workpath "$workDir\build" `
   --specpath $workDir `
   --add-data "$repo\agent;agent" `
+  --hidden-import asyncio `
   --hidden-import agent `
   --hidden-import agent.agent `
   --hidden-import agent.config `
