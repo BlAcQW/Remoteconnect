@@ -109,18 +109,35 @@ jobs:
           retention-days: 30
 
   # ───────────────────────── Optional deploy ─────────────────────────
+  # GitHub Actions doesn't allow `secrets.*` in job-level `if:`. Instead the
+  # job always runs and the first step writes a skip flag if VPS_HOST is
+  # missing; later steps gate on that flag and exit cleanly.
   deploy:
     name: Deploy to VPS
     needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
-    # Only attempt SCP when the host secret is configured. Skipped silently otherwise.
-    if: ${{ vars.VPS_HOST != '' || secrets.VPS_HOST != '' }}
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
     steps:
+      - name: Decide if we deploy
+        id: gate
+        run: |
+          if [ -z "$VPS_HOST" ]; then
+            echo "::notice::VPS_HOST not configured — skipping deploy. Add secrets.VPS_HOST + secrets.VPS_SSH_KEY to enable."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/download-artifact@v4
+        if: steps.gate.outputs.skip == 'false'
         with:
           path: dist
 
       - name: Lay out artifacts in the layout the backend expects
+        if: steps.gate.outputs.skip == 'false'
         run: |
           mkdir -p deploy/dist
           mv dist/agent-linux   deploy/dist/linux
@@ -129,9 +146,7 @@ jobs:
           ls -la deploy/dist/*
 
       - name: Configure SSH
-        env:
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+        if: steps.gate.outputs.skip == 'false'
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -140,13 +155,12 @@ jobs:
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Push to VPS
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_SSH_USER: ${{ secrets.VPS_SSH_USER || 'root' }}
+        if: steps.gate.outputs.skip == 'false'
         run: |
+          USER="${VPS_SSH_USER:-root}"
           scp -i ~/.ssh/id_rsa -r deploy/dist/* \
-              "${VPS_SSH_USER}@${VPS_HOST}:/root/home/rmm/remoteconnect/agent/install/build/dist/"
-          echo "✓ deployed to ${VPS_SSH_USER}@${VPS_HOST}"
+              "${USER}@${VPS_HOST}:/root/home/rmm/remoteconnect/agent/install/build/dist/"
+          echo "✓ deployed to ${USER}@${VPS_HOST}"
 
   # ───────────────────────── Optional release ─────────────────────────
   release:
