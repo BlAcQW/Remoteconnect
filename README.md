@@ -77,7 +77,7 @@ for the frontend) and edit. `dev.sh` does this automatically on first run.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | `sqlite+aiosqlite:///./remoteconnect.db` | SQLAlchemy URL. Postgres URLs are auto-rewritten to `postgresql+asyncpg://`; libpq query params (`sslmode`, `channel_binding`) are stripped and SSL is configured via `connect_args`. |
+| `DATABASE_URL` | `` | SQLAlchemy URL. Postgres URLs are auto-rewritten to `postgresql+asyncpg://`; libpq query params (`sslmode`, `channel_binding`) are stripped and SSL is configured via `connect_args`. |
 | `JWT_SECRET` | (required, 32+ chars) | Signs login tokens. `dev.sh` rolls a random one on first run. |
 | `DAILY_API_KEY` | empty | When unset the backend uses mock Daily URLs/tokens. Set to a real key from <https://dashboard.daily.co/developers> to publish real video. |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowlist for the FastAPI app. The browser usually goes through the Next.js `/api/*` proxy, so this only matters for direct API consumers. |
@@ -86,7 +86,7 @@ for the frontend) and edit. `dev.sh` does this automatically on first run.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `BACKEND_URL` | `http://127.0.0.1:8765` | Server-side only. Where Next.js Route Handlers proxy to. |
+| `BACKEND_URL` | `` | Server-side only. Where Next.js Route Handlers proxy to. |
 | `JWT_COOKIE_NAME` | `rc_jwt` | Cookie name for the technician JWT. |
 | `JWT_COOKIE_MAX_AGE_S` | `86400` | 24h, matches backend `ACCESS_TOKEN_EXPIRE_MINUTES`. |
 | `PORT` | `3000` (set by `dev.sh`) | Next.js listen port. |
@@ -95,8 +95,8 @@ for the frontend) and edit. `dev.sh` does this automatically on first run.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `SERVER_HTTP_URL` | `http://127.0.0.1:8765` | Backend HTTP for register/heartbeat. |
-| `SERVER_WS_URL` | `ws://127.0.0.1:8765` | Backend WS for command channel. Switch to `wss://` for production. |
+| `SERVER_HTTP_URL` | ` | Backend HTTP for register/heartbeat. |
+| `SERVER_WS_URL` | `` | Backend WS for command channel. Switch to `wss://` for production. |
 | `MACHINE_NAME` | `socket.gethostname()` | Display name in the dashboard. |
 | `HEARTBEAT_INTERVAL_S` | `30` | Heartbeat period. |
 | `DAILY_PUBLISHER_CMD` | empty | Shell command run on `start_session` to publish the screen. Empty = log-only. See `agent/.env.example` for the recommended bundled publisher (`python -m agent.publisher_daily`). |
@@ -133,19 +133,7 @@ Compose runs backend + frontend with hot-reload (source mounted). The agent
 is not in compose — agents live on the machines you want to remote-control,
 so you'd run them on those machines directly.
 
-## What's built
 
-The PRD has 7 phases. Status:
-
-| # | Phase | Status |
-|---|---|---|
-| 1 | Backend foundation (auth, machines, sessions, WS manager) | ✅ |
-| 2 | Python agent (register, heartbeat, WS, screen capture, input) | ✅ |
-| 3 | Daily.co integration (real REST client + agent-side publisher) | ✅ — works when `DAILY_API_KEY` is set |
-| 4 | Frontend dashboard (login, machine list, session start) | ✅ |
-| 5 | Live session viewer (Daily.co iframe + input passthrough + RemoteToolbar) | ✅ |
-| 6 | File transfer (chunked upload/download with sandbox) | ✅ — 100 MiB cap, path-traversal blocked |
-| 7 | Polish & deploy | partial — `dev.sh` and Docker, but no Windows Service installer for the agent |
 
 ## Caveats
 
