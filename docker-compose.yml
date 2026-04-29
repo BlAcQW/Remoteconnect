@@ -1,0 +1,58 @@
+# RemoteConnect dev stack — backend + frontend with hot reload.
+# The agent is *not* in this compose: it lives on the machines you want to
+# remote-control, so install it there (`./dev.sh --no-agent` on the server,
+# then run the agent separately on a real desktop).
+#
+# Usage:
+#   docker compose up           # foreground, Ctrl-C to stop
+#   docker compose up -d        # detached
+#   docker compose down -v      # remove containers + the SQLite volume
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////data/remoteconnect.db
+      JWT_SECRET: ${JWT_SECRET:-please-set-JWT_SECRET-in-a-.env-file}
+      DAILY_API_KEY: ${DAILY_API_KEY:-}
+      CORS_ORIGINS: http://localhost:3000
+    volumes:
+      # Hot reload — uvicorn --reload picks up changes
+      - ./backend:/app/backend
+      # SQLite persistence so the DB survives container restarts
+      - rc-data:/data
+    expose:
+      - "8765"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8765
+      JWT_COOKIE_NAME: rc_jwt
+      JWT_COOKIE_MAX_AGE_S: "86400"
+      PORT: "3000"
+    volumes:
+      # Hot reload — next dev picks up changes
+      - ./frontend:/app
+      # Don't shadow the deps installed in the image
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  rc-data:

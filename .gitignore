@@ -1,0 +1,34 @@
+# Python
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Node / Next.js
+**/node_modules/
+**/.next/
+**/out/
+**/.swc/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local env / secrets — only the *.example files get committed
+**/.env
+**/.env.local
+**/.env.*.local
+
+# SQLite (default dev DB)
+**/*.db
+**/*.sqlite
+**/*.sqlite-journal
+
+# Agent-local state
+agent/config.json
+agent/files/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

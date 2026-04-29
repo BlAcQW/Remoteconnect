@@ -1,0 +1,32 @@
+# User-mode systemd unit for the RemoteConnect agent.
+# Lives in ~/.config/systemd/user/ — runs under the desktop user's session
+# so pynput can inject input into the active X/Wayland display.
+#
+# Templated by install-linux.sh: __INSTALL_DIR__ is replaced with the
+# installation directory at install time.
+#
+# Manage with:
+#   systemctl --user start|stop|restart|status remoteconnect-agent
+#   journalctl --user -u remoteconnect-agent -f
+
+[Unit]
+Description=RemoteConnect agent
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=__INSTALL_DIR__/venv/bin/python -m agent.agent
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# Crash logs flow into the user journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=remoteconnect-agent
+
+[Install]
+WantedBy=default.target
