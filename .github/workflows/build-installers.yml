@@ -176,7 +176,14 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir -p release
-          find dist -type f -exec cp {} release/ \;
+          # Only the three real installer files. The macOS artifact
+          # contains an .app bundle (thousands of internal files from
+          # PyInstaller --onedir) that we must NOT upload to the Release.
+          find dist -type f \( \
+              -name 'RemoteConnectAgent-linux-x86_64' \
+              -o -name 'RemoteConnectAgent-win.exe' \
+              -o -name 'RemoteConnectAgent-mac.pkg' \
+            \) -exec cp {} release/ \;
           ls -la release/
 
       - uses: softprops/action-gh-release@v2
