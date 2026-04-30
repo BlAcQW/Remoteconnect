@@ -61,6 +61,16 @@ TECH_TO_TECH: frozenset[str] = frozenset({"chat", "annotation_draw", "annotation
 MAX_TRANSFER_BYTES = 100 * 1024 * 1024
 
 
+# Binary frame envelope from agent → backend (MJPEG video):
+#   [u8 type=1][u8 sid_len][6 reserved bytes][session_id utf-8][JPEG bytes]
+# type=1   → JPEG frame (only type defined for now)
+# Backend strips the header and forwards just the JPEG to the technician(s)
+# in that session. Technician WS is already session-scoped so no header is
+# needed downstream.
+FRAME_HEADER_LEN = 8
+FRAME_TYPE_JPEG = 1
+
+
 @router.websocket("/agent/{machine_id}")
 async def agent_ws(
     websocket: WebSocket,
@@ -77,7 +87,39 @@ async def agent_ws(
     await manager.connect(machine_id, websocket)
     try:
         while True:
-            raw = await websocket.receive_text()
+            event = await websocket.receive()
+            etype = event.get("type")
+            if etype == "websocket.disconnect":
+                raise WebSocketDisconnect(code=event.get("code", 1000))
+
+            # ── Binary path: MJPEG video frames ─────────────────────────────
+            if "bytes" in event and event["bytes"] is not None:
+                data: bytes = event["bytes"]
+                if len(data) < FRAME_HEADER_LEN:
+                    logger.warning("Agent %s sent short binary frame (%d bytes)", machine_id, len(data))
+                    continue
+                ftype = data[0]
+                sid_len = data[1]
+                payload_start = FRAME_HEADER_LEN + sid_len
+                if ftype != FRAME_TYPE_JPEG or payload_start > len(data):
+                    logger.warning(
+                        "Agent %s sent unknown binary frame type=%d sid_len=%d total=%d",
+                        machine_id, ftype, sid_len, len(data),
+                    )
+                    continue
+                try:
+                    session_id = data[FRAME_HEADER_LEN:payload_start].decode("ascii")
+                except UnicodeDecodeError:
+                    logger.warning("Agent %s sent frame with non-ascii session_id", machine_id)
+                    continue
+                # Forward only the JPEG body. Slice is a view, no copy.
+                await manager.send_bytes_to_technician(session_id, data[payload_start:])
+                continue
+
+            # ── Text path: JSON control messages ────────────────────────────
+            raw = event.get("text")
+            if raw is None:
+                continue
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:

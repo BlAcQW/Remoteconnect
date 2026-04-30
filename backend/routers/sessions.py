@@ -25,6 +25,11 @@ JWT_ALGORITHM = "HS256"
 GUEST_AUDIENCE = "rc-guest"
 GUEST_TOKEN_TTL_S = int(os.getenv("GUEST_TOKEN_TTL_S", str(60 * 60)))  # 1h
 
+# Video transport. "mjpeg" (default) streams JPEG frames over the agent
+# WebSocket — works on every OS, no third-party SDK. "daily" keeps the
+# Daily.co WebRTC pipeline (legacy, requires daily-python on the agent).
+VIDEO_BACKEND = os.getenv("RC_VIDEO_BACKEND", "mjpeg").lower()
+
 
 class SessionCreate(BaseModel):
     machine_id: str
@@ -95,58 +100,65 @@ async def create_session(
     await db.commit()
     await db.refresh(db_session)
 
-    try:
-        room = await daily.create_room(db_session.id)
-    except Exception as e:
-        await db.delete(db_session)
+    # Video transport selection. MJPEG (default) skips Daily.co entirely —
+    # frames stream over the existing agent WebSocket. Daily mode is kept
+    # for back-compat / future audio support.
+    use_daily = VIDEO_BACKEND == "daily"
+    room: Optional[daily.Room] = None
+    technician_token: Optional[str] = None
+    agent_token: Optional[str] = None
+    room_url: Optional[str] = None
+    room_name: Optional[str] = None
+
+    if use_daily:
+        try:
+            room = await daily.create_room(db_session.id)
+        except Exception as e:
+            await db.delete(db_session)
+            await db.commit()
+            raise HTTPException(status_code=502, detail=f"Daily.co room creation failed: {e}")
+
+        await db.execute(
+            update(Session).where(Session.id == db_session.id).values(daily_room_url=room["url"])
+        )
         await db.commit()
-        raise HTTPException(status_code=502, detail=f"Daily.co room creation failed: {e}")
+        db_session.daily_room_url = room["url"]
+        room_url = room["url"]
+        room_name = room["name"]
 
-    await db.execute(
-        update(Session).where(Session.id == db_session.id).values(daily_room_url=room["url"])
-    )
-    await db.commit()
-    db_session.daily_room_url = room["url"]
+        technician_token = await daily.create_meeting_token(
+            room_name=room["name"], user_name=f"tech-{current_user.email}", is_owner=True,
+        )
+        agent_token = await daily.create_meeting_token(
+            room_name=room["name"], user_name=f"agent-{machine.id}", is_owner=False,
+        )
 
-    technician_token = await daily.create_meeting_token(
-        room_name=room["name"], user_name=f"tech-{current_user.email}", is_owner=True,
-    )
-    agent_token = await daily.create_meeting_token(
-        room_name=room["name"], user_name=f"agent-{machine.id}", is_owner=False,
-    )
-
+    common_payload = {
+        "session_id": db_session.id,
+        "video_backend": VIDEO_BACKEND,
+        "room_url": room_url,
+        "room_name": room_name,
+        "meeting_token": agent_token,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
     if session_data.require_consent:
         # Don't autostart capture; ask the remote user first.
         await manager.send_to_machine(
             session_data.machine_id,
-            {
-                "type": "consent_required",
-                "session_id": db_session.id,
-                "technician_email": current_user.email,
-                "room_url": room["url"],
-                "room_name": room["name"],
-                "meeting_token": agent_token,
-                "timestamp": datetime.utcnow().isoformat(),
-            },
+            {**common_payload, "type": "consent_required",
+             "technician_email": current_user.email},
         )
     else:
         await manager.send_to_machine(
             session_data.machine_id,
-            {
-                "type": "start_session",
-                "session_id": db_session.id,
-                "room_url": room["url"],
-                "room_name": room["name"],
-                "meeting_token": agent_token,
-                "timestamp": datetime.utcnow().isoformat(),
-            },
+            {**common_payload, "type": "start_session"},
         )
 
     await audit(
         db, "session.create",
         user_id=current_user.id, machine_id=machine.id, session_id=db_session.id,
         actor_ip=_client_ip(request),
-        detail={"require_consent": session_data.require_consent},
+        detail={"require_consent": session_data.require_consent, "video_backend": VIDEO_BACKEND},
     )
 
     return SessionResponse(
@@ -154,7 +166,7 @@ async def create_session(
         machine_id=db_session.machine_id,
         technician_id=db_session.technician_id,
         daily_room_url=db_session.daily_room_url,
-        daily_room_name=room["name"],
+        daily_room_name=room_name,
         status=db_session.status,
         started_at=db_session.started_at,
         ended_at=db_session.ended_at,

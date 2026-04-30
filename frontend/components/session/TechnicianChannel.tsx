@@ -13,11 +13,13 @@ import {
 type Status = "connecting" | "open" | "closed" | "reconnecting";
 
 type Listener = (msg: Record<string, unknown>) => void;
+type BinaryListener = (data: ArrayBuffer) => void;
 
 type Channel = {
   status: Status;
   send: (payload: Record<string, unknown>) => boolean;
   subscribe: (l: Listener) => () => void;
+  subscribeBinary: (l: BinaryListener) => () => void;
 };
 
 const Ctx = createContext<Channel | null>(null);
@@ -42,6 +44,7 @@ export function TechnicianChannelProvider({
 }) {
   const wsRef = useRef<WebSocket | null>(null);
   const listenersRef = useRef<Set<Listener>>(new Set());
+  const binaryListenersRef = useRef<Set<BinaryListener>>(new Set());
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
   const aliveRef = useRef(true);
@@ -62,6 +65,7 @@ export function TechnicianChannelProvider({
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws/technician/${sessionId}`;
     const ws = new WebSocket(url);
+    ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -69,6 +73,18 @@ export function TechnicianChannelProvider({
       setStatus("open");
     };
     ws.onmessage = (ev) => {
+      // Binary path: MJPEG video frames forwarded by backend (no header).
+      if (ev.data instanceof ArrayBuffer) {
+        for (const l of binaryListenersRef.current) {
+          try {
+            l(ev.data);
+          } catch (err) {
+            console.warn("technician channel binary listener threw", err);
+          }
+        }
+        return;
+      }
+      // Text path: JSON control messages.
       let parsed: Record<string, unknown> | null = null;
       try {
         parsed = JSON.parse(ev.data);
@@ -139,7 +155,17 @@ export function TechnicianChannelProvider({
     };
   }, []);
 
-  const value = useMemo<Channel>(() => ({ status, send, subscribe }), [status, send, subscribe]);
+  const subscribeBinary = useCallback((l: BinaryListener) => {
+    binaryListenersRef.current.add(l);
+    return () => {
+      binaryListenersRef.current.delete(l);
+    };
+  }, []);
+
+  const value = useMemo<Channel>(
+    () => ({ status, send, subscribe, subscribeBinary }),
+    [status, send, subscribe, subscribeBinary],
+  );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

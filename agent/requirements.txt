@@ -5,8 +5,8 @@ Pillow>=10.4.0,<12
 pynput==1.7.6
 pyperclip==1.9.0
 python-dotenv==1.0.1
-# Optional but recommended on real desktop agents — used by agent.publisher_daily
-# to publish the screen as a Daily.co camera track. Native binary; install may
-# require build tooling on some Linux distros. No Windows wheels are
-# published, so we skip it there (agent.publisher_daily handles absence).
-daily-python==0.27.0 ; sys_platform != "win32"
+# daily-python was removed in v0.2.0. Video is now streamed as MJPEG over
+# the agent's existing WebSocket (see agent.agent.stream_loop). The legacy
+# Daily.co subprocess path in agent.publisher_daily is still callable when
+# the backend explicitly requests it (RC_VIDEO_BACKEND=daily) but is no
+# longer pulled in as a default dependency — it had no Windows wheels.

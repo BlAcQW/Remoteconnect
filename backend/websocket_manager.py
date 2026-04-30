@@ -107,6 +107,28 @@ class ConnectionManager:
             peers.discard(ws)
         return delivered
 
+    async def send_bytes_to_technician(self, session_id: str, data: bytes) -> int:
+        """Fan out binary frames (e.g. MJPEG video) to technicians in a session.
+
+        Separate from send_to_technician() because video frames are hot path —
+        we skip JSON encoding, share the same bytes object across all peers.
+        """
+        peers = self.technician_connections.get(session_id)
+        if not peers:
+            return 0
+        delivered = 0
+        broken: list[WebSocket] = []
+        for ws in list(peers):
+            try:
+                await ws.send_bytes(data)
+                delivered += 1
+            except Exception as e:
+                logger.warning("send_bytes_to_technician failed (session=%s): %s", session_id, e)
+                broken.append(ws)
+        for ws in broken:
+            peers.discard(ws)
+        return delivered
+
     def technician_count(self, session_id: str) -> int:
         return len(self.technician_connections.get(session_id, ()))
 
