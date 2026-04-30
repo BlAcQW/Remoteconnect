@@ -45,9 +45,35 @@ Set-Location $repo
 $outDir = Join-Path $repo 'agent\install\build\dist\windows'
 $workDir = Join-Path $repo 'agent\install\build\.work-windows'
 $entry = Join-Path $repo 'agent\install\build\agent_entry.py'
+$iconPath = Join-Path $repo 'agent\install\build\win-icon.ico'
+$manifestPath = Join-Path $repo 'agent\install\build\win-app.manifest'
+$versionTemplate = Join-Path $repo 'agent\install\build\win-version-info.template.txt'
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+
+# ── Build-time metadata: derive a clean numeric version from the git tag ─────
+# In CI the tag is in $env:GITHUB_REF_NAME (e.g. "v0.2.4"). For local builds
+# we fall back to "0.0.0" so devs can still run this script. The 4-part
+# version tuple Windows expects (major, minor, patch, build) is hard-coded
+# to build=0; PyInstaller doesn't surface a build counter.
+$rawTag = $env:GITHUB_REF_NAME
+if (-not $rawTag) { $rawTag = '0.0.0' }
+$cleanTag = $rawTag -replace '^v', ''
+$parts = $cleanTag.Split('.')
+while ($parts.Length -lt 3) { $parts += '0' }
+$verMajor = [int]($parts[0] -replace '\D','0')
+$verMinor = [int]($parts[1] -replace '\D','0')
+$verPatch = [int]($parts[2] -replace '\D','0')
+$versionTuple = "($verMajor, $verMinor, $verPatch, 0)"
+$versionString = "$verMajor.$verMinor.$verPatch.0"
+Write-Host "Embedding version metadata: $versionString $versionTuple"
+
+# Render the version-info file from the template into the work dir.
+$versionFile = Join-Path $workDir 'win-version-info.txt'
+$tpl = Get-Content -Raw -LiteralPath $versionTemplate
+$tpl = $tpl.Replace('{VERSION_TUPLE}', $versionTuple).Replace('{VERSION_STRING}', $versionString)
+Set-Content -LiteralPath $versionFile -Value $tpl -Encoding UTF8
 
 # Stage a clean copy of agent/ in the work dir, strip dev artifacts, then
 # write the production .env into it. PyInstaller --add-data points at the
@@ -114,6 +140,9 @@ if (-not (Test-Path "$workDir\venv\Scripts\python.exe")) {
   --distpath $outDir `
   --workpath "$workDir\build" `
   --specpath $workDir `
+  --icon $iconPath `
+  --version-file $versionFile `
+  --manifest $manifestPath `
   --add-data "$agentStage;agent" `
   --hidden-import asyncio `
   --hidden-import agent `
