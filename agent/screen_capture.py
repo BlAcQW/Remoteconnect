@@ -13,15 +13,35 @@ class MonitorInfo(TypedDict):
     top: int
 
 
-def capture_frame(quality: int = 60, monitor_index: int = 1) -> bytes:
-    """Capture the requested monitor and return JPEG-encoded bytes."""
+def capture_frame(
+    quality: int = 60,
+    monitor_index: int = 1,
+    max_width: int | None = None,
+    max_height: int | None = None,
+    grayscale: bool = False,
+) -> bytes:
+    """Capture the requested monitor and return JPEG-encoded bytes.
+
+    Streaming-friendly knobs:
+      max_width / max_height — downscale the captured frame so it fits
+        within these bounds (preserves aspect ratio). Native capture on a
+        4K monitor is otherwise a 24+ MB raw frame; resizing to 1280×720
+        before JPEG cuts the encoded bytes by an order of magnitude.
+      grayscale — drop colour entirely. Useful on poor links.
+    """
     import mss
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     with mss.mss() as sct:
         mon = sct.monitors[monitor_index]
         raw = sct.grab(mon)
         img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+
+    if max_width and max_height and (img.width > max_width or img.height > max_height):
+        # Pillow's thumbnail is in-place and respects aspect ratio.
+        img.thumbnail((max_width, max_height), Image.LANCZOS)
+    if grayscale:
+        img = ImageOps.grayscale(img).convert("RGB")
 
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=quality, optimize=True)

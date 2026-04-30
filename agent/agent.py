@@ -41,6 +41,12 @@ _publishers: dict[str, asyncio.subprocess.Process] = {}
 # running stream_loop(); cancel to stop.
 _streamers: dict[str, asyncio.Task] = {}
 
+# Sessions the backend told us are active. Survives WS reconnects so the
+# streamer auto-resumes when the WS comes back — without this the agent
+# would silently stop publishing the screen any time its WS blipped.
+# Cleared only on explicit end_session from backend.
+_active_sessions: dict[str, dict[str, Any]] = {}
+
 # Binary frame envelope (matches backend signaling.py FRAME_HEADER_LEN=8).
 _FRAME_TYPE_JPEG = 1
 _FRAME_HEADER_LEN = 8
@@ -110,17 +116,20 @@ async def stream_loop(session_id: str, ws: Any) -> None:
     try:
         while True:
             state = runtime_state.load()
-            fps = max(1, min(30, int(state.get("fps", 10))))
+            fps = max(1, min(30, int(state.get("fps", 8))))
             quality_label = str(state.get("quality", "medium")).lower()
             monitor_index = max(1, int(state.get("monitor_index", 1)))
-            jpeg_quality, _grayscale = _QUALITY_TO_JPEG.get(
+            max_width = max(320, min(3840, int(state.get("width", 1280))))
+            max_height = max(240, min(2160, int(state.get("height", 720))))
+            jpeg_quality, grayscale = _QUALITY_TO_JPEG.get(
                 quality_label, _QUALITY_TO_JPEG["medium"]
             )
 
             tick_started = asyncio.get_event_loop().time()
             try:
                 jpeg = await asyncio.to_thread(
-                    capture_frame, jpeg_quality, monitor_index
+                    capture_frame, jpeg_quality, monitor_index,
+                    max_width, max_height, grayscale,
                 )
                 await ws.send(_build_frame(session_id, jpeg))
                 consecutive_failures = 0
@@ -370,6 +379,11 @@ async def handle_message(msg: dict[str, Any], ws: Any) -> None:
             sid, backend, room_url,
         )
         if sid:
+            _active_sessions[sid] = {
+                "video_backend": backend,
+                "room_url": room_url,
+                "meeting_token": token,
+            }
             try:
                 await start_session_video(sid, backend, ws, room_url, token)
             except Exception:
@@ -378,6 +392,7 @@ async def handle_message(msg: dict[str, Any], ws: Any) -> None:
         sid = msg.get("session_id")
         log.info("end_session: session_id=%s", sid)
         if sid:
+            _active_sessions.pop(sid, None)
             try:
                 await stop_session_video(sid)
             except Exception:
@@ -515,15 +530,33 @@ async def handle_message(msg: dict[str, Any], ws: Any) -> None:
 async def ws_session(machine_id: str, token: str) -> None:
     uri = f"{config.SERVER_WS_URL}/ws/agent/{machine_id}?token={token}"
     log.info("Connecting WS %s", uri.replace(token, "***"))
-    # Aggressive ping settings: detect half-closed (CLOSE-WAIT) sockets
-    # within ~15s and trigger reconnect via the outer ws_loop's backoff.
-    # max_size=None: incoming frames are control-plane JSON only; outgoing
-    # binary frames can be a few hundred KB which websockets handles fine.
+    # ping_timeout=15 (was 5): MJPEG sends share the same outbound TCP
+    # buffer as control-plane pings, so a slow link or a beefy frame can
+    # delay a pong long enough to trip a too-tight timeout. 15s leaves
+    # plenty of headroom while still detecting genuinely dead sockets.
+    # max_size=None disables inbound frame-size limits — control-plane
+    # only, never an issue, but the default 1 MiB is needlessly tight.
     async with websockets.connect(
-        uri, ping_interval=10, ping_timeout=5, close_timeout=5,
+        uri, ping_interval=10, ping_timeout=15, close_timeout=5,
         max_size=None,
     ) as ws:
         log.info("WS connected")
+        # Resume any sessions the backend last told us were active. The
+        # backend won't re-send start_session on agent reconnect, so
+        # without this we'd silently stop publishing the screen every
+        # time the WS blips.
+        for sid, st in list(_active_sessions.items()):
+            log.info("Resuming streamer for active session=%s", sid)
+            try:
+                await start_session_video(
+                    sid,
+                    str(st.get("video_backend", "mjpeg")),
+                    ws,
+                    st.get("room_url"),
+                    st.get("meeting_token"),
+                )
+            except Exception:
+                log.exception("Failed to resume session %s on reconnect", sid)
         try:
             async for raw in ws:
                 try:
@@ -534,8 +567,10 @@ async def ws_session(machine_id: str, token: str) -> None:
                 log.info("RX msg type=%s session=%s", msg.get("type"), msg.get("session_id"))
                 await handle_message(msg, ws)
         finally:
-            # Stop any active streamers when the WS goes away — they'd
+            # Stop any active streamer tasks when the WS goes away — they'd
             # otherwise hang on `await ws.send()` against a dead socket.
+            # _active_sessions stays populated so ws_loop's next iteration
+            # can resume them.
             for sid in list(_streamers.keys()):
                 await stop_stream(sid)
 

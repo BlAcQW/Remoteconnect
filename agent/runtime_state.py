@@ -26,10 +26,14 @@ _lock = threading.Lock()
 
 DEFAULT_STATE: dict[str, Any] = {
     "monitor_index": 1,
-    "fps": 15,
+    # 8 fps + medium quality + 1280×720 cap = ~0.5–1 Mbps for typical
+    # desktop content. Plenty smooth for support work and well within
+    # the bandwidth budget that lets WS pings stay timely. Technician
+    # can dial up via the existing FPS / quality controls.
+    "fps": 8,
     "width": 1280,
     "height": 720,
-    "quality": "high",     # high | medium | low | grayscale
+    "quality": "medium",   # high | medium | low | grayscale
     "input_locked": False,
     "screen_locked": False,
     "updated_at": 0,
