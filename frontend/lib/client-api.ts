@@ -38,6 +38,10 @@ export const api = {
     }),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   machines: () => request<Machine[]>("/api/machines"),
+  deleteMachine: (id: string) =>
+    request<{ status: string }>(`/api/machines/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   createSession: (machine_id: string) =>
     request<Session>("/api/sessions", {
       method: "POST",

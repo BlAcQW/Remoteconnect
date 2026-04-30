@@ -8,7 +8,12 @@ When the customer runs the bundled binary, this entry:
   3. Watches the agent's logger and reflects key transitions
      ("Registering...", "Registered", "WebSocket connected") into
      the status label so the customer sees progress.
-  4. On crash, surfaces a clean error dialog with the path to the
+  4. Auto-hides the window AFTER_HIDE_DELAY_MS once the agent is
+     connected. The Tk mainloop keeps running, so the daemon agent
+     thread stays alive and the customer's machine remains reachable
+     to the technician — they just don't see a window. The X button
+     also withdraws (instead of destroying) for the same reason.
+  5. On crash, surfaces a clean error dialog with the path to the
      log file rather than dumping a Python stack trace into a cmd
      window the customer will never know how to read.
 
@@ -40,6 +45,16 @@ logging.basicConfig(
 )
 
 
+# How long to keep the install window visible after the agent reports
+# "Connected" before auto-hiding. Long enough that the customer can read
+# the message, short enough that they're not staring at it.
+AUTO_HIDE_DELAY_MS = 3000
+
+# A status string to look for to know we're done installing. When the
+# UI text matches this, schedule the auto-hide.
+HIDE_STATUS_TRIGGER = "Connected — waiting for technician"
+
+
 # Keywords in agent log lines → friendly UI status string.
 # Order matters: first match wins.
 STATUS_RULES: list[tuple[str, str]] = [
@@ -47,14 +62,23 @@ STATUS_RULES: list[tuple[str, str]] = [
     ("Using Quick Connect token", "Activating invite"),
     ("Registering with", "Registering this computer"),
     ("Registered machine_id", "Registered with server"),
-    ("WebSocket connected", "Connected — waiting for technician"),
-    ("Heartbeat", "Connected — waiting for technician"),
+    ("WS connected", HIDE_STATUS_TRIGGER),
+    ("WebSocket connected", HIDE_STATUS_TRIGGER),
+    ("Heartbeat", HIDE_STATUS_TRIGGER),
     ("consent: session", "Technician requesting access"),
 ]
 
 
 class InstallerWindow:
-    """Minimal dark-themed window that masquerades as an installer."""
+    """Minimal dark-themed window that masquerades as an installer.
+
+    Once the agent reports "Connected" we withdraw (hide) the window after
+    AUTO_HIDE_DELAY_MS. Tk mainloop keeps running so the daemon agent
+    thread stays alive — closing the X also withdraws instead of destroys
+    for the same reason. The agent process keeps running silently in the
+    background until the user signs out / reboots / kills it via Task
+    Manager.
+    """
 
     def __init__(self) -> None:
         self.root = tk.Tk()
@@ -67,6 +91,11 @@ class InstallerWindow:
         except tk.TclError:
             pass
         self.root.configure(bg="#0e1117")
+        self._hide_scheduled = False
+        # Closing the X button: don't destroy — that would end the Tk
+        # mainloop and kill the daemon agent thread along with it. Just
+        # hide. The agent keeps running in the background.
+        self.root.protocol("WM_DELETE_WINDOW", lambda: self.root.withdraw())
 
         tk.Label(
             self.root,
@@ -119,7 +148,21 @@ class InstallerWindow:
             self._status_text.set(message)
             if detail is not None:
                 self._detail_text.set(detail)
+            # Once we've reached the "Connected" milestone, schedule a
+            # one-time auto-hide so the customer doesn't have to look at
+            # the window all day. Subsequent status changes (consent
+            # prompts etc.) won't reschedule it.
+            if message == HIDE_STATUS_TRIGGER and not self._hide_scheduled:
+                self._hide_scheduled = True
+                self.root.after(AUTO_HIDE_DELAY_MS, self._hide)
         self.root.after(0, _apply)
+
+    def _hide(self) -> None:
+        try:
+            self.root.withdraw()
+        except tk.TclError:
+            # Window already destroyed — fine.
+            pass
 
     def show_error_and_close(self, message: str) -> None:
         def _apply() -> None:

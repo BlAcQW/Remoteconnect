@@ -6,7 +6,7 @@ import { ApiError, api } from "@/lib/client-api";
 import { MachineCard } from "./MachineCard";
 
 export function MachineList({ initial }: { initial: Machine[] }) {
-  const { data, error, isLoading } = useSWR<Machine[]>("machines", api.machines, {
+  const { data, error, isLoading, mutate } = useSWR<Machine[]>("machines", api.machines, {
     refreshInterval: 10_000,
     revalidateOnFocus: true,
     fallbackData: initial,
@@ -47,7 +47,18 @@ export function MachineList({ initial }: { initial: Machine[] }) {
       </p>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {machines.map((m) => (
-          <MachineCard key={m.id} machine={m} />
+          <MachineCard
+            key={m.id}
+            machine={m}
+            onDeleted={() => {
+              // Optimistic local removal so the card disappears immediately;
+              // SWR revalidates on the next 10s tick anyway.
+              mutate(
+                (prev) => (prev ?? []).filter((x) => x.id !== m.id),
+                { revalidate: false },
+              );
+            }}
+          />
         ))}
       </div>
     </div>

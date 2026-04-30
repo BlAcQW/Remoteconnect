@@ -29,9 +29,15 @@ function osLabel(os: string | null): string {
   return os;
 }
 
-export function MachineCard({ machine }: { machine: Machine }) {
+type MachineCardProps = {
+  machine: Machine;
+  onDeleted?: () => void;
+};
+
+export function MachineCard({ machine, onDeleted }: MachineCardProps) {
   const router = useRouter();
   const [connecting, setConnecting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function onConnect() {
@@ -43,6 +49,25 @@ export function MachineCard({ machine }: { machine: Machine }) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
       setConnecting(false);
+    }
+  }
+
+  async function onDelete() {
+    if (deleting) return;
+    const ok = window.confirm(
+      `Delete "${machine.name}" from your machine list?\n\n` +
+      `The agent on the device will keep running and could re-register on next start. ` +
+      `Uninstall the agent on the device first if you want it gone permanently.`,
+    );
+    if (!ok) return;
+    setError(null);
+    setDeleting(true);
+    try {
+      await api.deleteMachine(machine.id);
+      onDeleted?.();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : (err as Error).message);
+      setDeleting(false);
     }
   }
 
@@ -63,9 +88,27 @@ export function MachineCard({ machine }: { machine: Machine }) {
             {machine.id.slice(0, 8)}…
           </p>
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-muted px-1.5 py-0.5 rounded border border-border">
-          {osLabel(machine.os)}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider text-muted px-1.5 py-0.5 rounded border border-border">
+            {osLabel(machine.os)}
+          </span>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleting || connecting}
+            title="Remove machine from list"
+            aria-label={`Delete machine ${machine.name}`}
+            className="text-muted hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition w-6 h-6 flex items-center justify-center rounded border border-transparent hover:border-danger/40"
+          >
+            {deleting ? (
+              <span className="text-xs">…</span>
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M2 2 L10 10 M10 2 L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       <dl className="mt-4 space-y-1.5 text-sm">
