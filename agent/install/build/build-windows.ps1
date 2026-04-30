@@ -5,12 +5,38 @@
 .DESCRIPTION
   Output: agent\install\build\dist\windows\RemoteConnectAgent-win.exe
 
+  The production server URL is baked into the bundled binary so a customer
+  can run RemoteConnectAgent-win.exe with a single double-click and it
+  registers with the right backend. Override per-build with -ServerUrl
+  (e.g. for staging or local dev binaries).
+
   If WINDOWS_CODESIGN_CERT (path to .pfx) and WINDOWS_CODESIGN_PASS are set
   in the environment, the binary is signed via signtool. Otherwise the
   build still succeeds — the binary just ships unsigned (Windows
   SmartScreen will warn the customer).
+
+.PARAMETER ServerUrl
+  RemoteConnect HTTPS endpoint baked into the binary's bundled .env.
+  Defaults to the production deployment.
+
+.PARAMETER WsUrl
+  WebSocket endpoint. Defaults to ws/wss derived from ServerUrl.
 #>
+param(
+    [string]$ServerUrl = 'https://remoteconnect.ikieguy.online',
+    [string]$WsUrl
+)
+
 $ErrorActionPreference = 'Stop'
+
+# Derive WsUrl from ServerUrl unless caller supplied one explicitly
+if (-not $WsUrl) {
+    if     ($ServerUrl -match '^https://(.+)$') { $WsUrl = "wss://$($Matches[1])" }
+    elseif ($ServerUrl -match '^http://(.+)$')  { $WsUrl = "ws://$($Matches[1])"  }
+    else { throw "ServerUrl must start with http:// or https:// (got: $ServerUrl)" }
+}
+Write-Host "Building with SERVER_HTTP_URL=$ServerUrl"
+Write-Host "                SERVER_WS_URL=$WsUrl"
 
 # Move to repo root
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..\..')
@@ -22,6 +48,32 @@ $entry = Join-Path $repo 'agent\install\build\agent_entry.py'
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+
+# Stage a clean copy of agent/ in the work dir, strip dev artifacts, then
+# write the production .env into it. PyInstaller --add-data points at the
+# staged copy so the source tree is never mutated and a developer's local
+# agent\.env is never bundled accidentally.
+$agentStage = Join-Path $workDir 'agent-stage'
+if (Test-Path $agentStage) { Remove-Item -Recurse -Force $agentStage }
+# Robocopy (not Copy-Item) because the work dir lives inside agent\, so a
+# naive recursive copy would self-include and explode. /XD skips the
+# installer build dir itself plus dev artifacts. Robocopy exit codes
+# 0..7 are success ("files copied"); 8+ is a real failure.
+$robocopySrc = Join-Path $repo 'agent'
+$null = robocopy $robocopySrc $agentStage /MIR `
+    /XD ".work-windows" ".work-linux" ".work-macos" "dist" `
+        "venv" ".venv" "__pycache__" "files" `
+    /XF "config.json" ".env" `
+    /NFL /NDL /NJH /NJS /NP
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+$LASTEXITCODE = 0  # robocopy uses non-zero on success; reset for later checks
+$envContent = @"
+SERVER_HTTP_URL=$ServerUrl
+SERVER_WS_URL=$WsUrl
+HEARTBEAT_INTERVAL_S=30
+DAILY_PUBLISHER_CMD=
+"@
+Set-Content -LiteralPath (Join-Path $agentStage '.env') -Value $envContent -Encoding ASCII
 
 # Set up Python venv with PyInstaller + agent deps.
 #
@@ -62,7 +114,7 @@ if (-not (Test-Path "$workDir\venv\Scripts\python.exe")) {
   --distpath $outDir `
   --workpath "$workDir\build" `
   --specpath $workDir `
-  --add-data "$repo\agent;agent" `
+  --add-data "$agentStage;agent" `
   --hidden-import asyncio `
   --hidden-import agent `
   --hidden-import agent.agent `

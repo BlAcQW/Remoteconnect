@@ -4,6 +4,10 @@
 # Output: agent/install/build/dist/macos/RemoteConnectAgent-mac.app
 #         agent/install/build/dist/macos/RemoteConnectAgent-mac.pkg
 #
+# The production server URL is baked into the bundled binary so the .pkg
+# can be installed without configuration. Override per-build via env vars:
+#   SERVER_HTTP_URL=https://staging.example.com ./build-macos.sh
+#
 # If APPLE_DEVELOPER_ID and APPLE_TEAM_ID are set, signs and notarizes.
 # Otherwise builds unsigned (Gatekeeper will block — user must
 # right-click → Open → confirm).
@@ -16,7 +20,41 @@ OUT_DIR="${ROOT}/agent/install/build/dist/macos"
 WORK_DIR="${ROOT}/agent/install/build/.work-macos"
 ENTRY="${ROOT}/agent/install/build/agent_entry.py"
 
+# Production endpoints baked into the bundle's .env. Override at build
+# time with environment variables when producing dev/staging builds.
+SERVER_HTTP_URL="${SERVER_HTTP_URL:-https://remoteconnect.ikieguy.online}"
+case "${SERVER_HTTP_URL}" in
+  https://*) SERVER_WS_URL="${SERVER_WS_URL:-wss://${SERVER_HTTP_URL#https://}}" ;;
+  http://*)  SERVER_WS_URL="${SERVER_WS_URL:-ws://${SERVER_HTTP_URL#http://}}"   ;;
+  *) echo "SERVER_HTTP_URL must start with http:// or https:// (got: ${SERVER_HTTP_URL})" >&2; exit 1 ;;
+esac
+echo "Building with SERVER_HTTP_URL=${SERVER_HTTP_URL}"
+echo "                SERVER_WS_URL=${SERVER_WS_URL}"
+
 mkdir -p "${OUT_DIR}"
+
+# Stage a clean copy of agent/ for bundling. Strips dev artifacts and
+# writes the production .env so the binary self-configures on first run.
+AGENT_STAGE="${WORK_DIR}/agent-stage"
+rm -rf "${AGENT_STAGE}"
+mkdir -p "${AGENT_STAGE}"
+# rsync (not cp -R) because the work dir lives inside agent/, so a naive
+# recursive copy would self-include and explode. Excluded paths cover dev
+# artifacts and the installer build dir itself.
+rsync -a \
+  --exclude='install/build/.work-*' \
+  --exclude='install/build/dist' \
+  --exclude='venv/' --exclude='.venv/' \
+  --exclude='__pycache__/' \
+  --exclude='config.json' --exclude='.env' \
+  --exclude='files/' \
+  "${ROOT}/agent/" "${AGENT_STAGE}/"
+cat > "${AGENT_STAGE}/.env" <<EOF
+SERVER_HTTP_URL=${SERVER_HTTP_URL}
+SERVER_WS_URL=${SERVER_WS_URL}
+HEARTBEAT_INTERVAL_S=30
+DAILY_PUBLISHER_CMD=
+EOF
 
 if [ ! -d "${WORK_DIR}/venv" ]; then
   python3 -m venv "${WORK_DIR}/venv"
@@ -32,7 +70,7 @@ fi
   --distpath "${OUT_DIR}" \
   --workpath "${WORK_DIR}/build" \
   --specpath "${WORK_DIR}" \
-  --add-data "${ROOT}/agent:agent" \
+  --add-data "${AGENT_STAGE}:agent" \
   --hidden-import agent \
   --hidden-import agent.agent \
   --hidden-import agent.config \

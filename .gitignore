@@ -27,6 +27,10 @@ next-env.d.ts
 agent/config.json
 agent/files/
 
+# PyInstaller build outputs
+agent/install/build/.work-*/
+agent/install/build/dist/
+
 # OS / editor
 .DS_Store
 Thumbs.db
