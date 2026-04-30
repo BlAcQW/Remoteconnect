@@ -85,6 +85,14 @@ fi
   --hidden-import websockets \
   --hidden-import httpx \
   --hidden-import dotenv \
+  --hidden-import mss \
+  --hidden-import PIL \
+  --hidden-import PIL.Image \
+  --hidden-import PIL.ImageOps \
+  --hidden-import pynput \
+  --hidden-import pynput.mouse \
+  --hidden-import pynput.keyboard \
+  --hidden-import pyperclip \
   "${ENTRY}"
 
 echo

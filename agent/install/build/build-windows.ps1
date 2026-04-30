@@ -128,6 +128,14 @@ if (-not (Test-Path "$workDir\venv\Scripts\python.exe")) {
   --hidden-import websockets `
   --hidden-import httpx `
   --hidden-import dotenv `
+  --hidden-import mss `
+  --hidden-import PIL `
+  --hidden-import PIL.Image `
+  --hidden-import PIL.ImageOps `
+  --hidden-import pynput `
+  --hidden-import pynput.mouse `
+  --hidden-import pynput.keyboard `
+  --hidden-import pyperclip `
   $entry
 
 $built = Join-Path $outDir 'RemoteConnectAgent-win.exe'
