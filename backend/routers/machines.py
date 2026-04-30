@@ -4,12 +4,14 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import audit
 from ..database import get_db
 from ..integrations import daily
+from ..models.audit_log import AuditLog
+from ..models.file_transfer import FileTransfer
 from ..models.join_token import JoinToken
 from ..models.machine import Machine
 from ..models.session import Session
@@ -183,12 +185,39 @@ async def delete_machine(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    await db.delete(machine)
-    await db.commit()
+    # Audit history is preserved with NULL machine/session refs so we still
+    # remember "user X deleted machine Y at time Z" without holding a
+    # foreign-key lock on the row we're about to delete. Sessions and the
+    # file transfers under them are removed because they're meaningless
+    # without their machine.
+    machine_name = machine.name
+    session_ids = (
+        await db.execute(select(Session.id).where(Session.machine_id == machine_id))
+    ).scalars().all()
+
+    if session_ids:
+        await db.execute(
+            update(AuditLog)
+            .where(AuditLog.session_id.in_(session_ids))
+            .values(session_id=None)
+        )
+        await db.execute(
+            delete(FileTransfer).where(FileTransfer.session_id.in_(session_ids))
+        )
+        await db.execute(delete(Session).where(Session.id.in_(session_ids)))
+
+    await db.execute(
+        update(AuditLog).where(AuditLog.machine_id == machine_id).values(machine_id=None)
+    )
+    await db.execute(delete(Machine).where(Machine.id == machine_id))
+
+    # Audit row for the delete itself — written *after* the cascade so the
+    # FK to machines is intentionally NULL (machine no longer exists).
     await audit(
         db, "machine.delete",
-        user_id=current_user.id, machine_id=machine_id,
+        user_id=current_user.id,
         actor_ip=_client_ip(request),
-        detail={"name": machine.name},
+        detail={"name": machine_name, "machine_id": machine_id, "sessions_removed": len(session_ids)},
     )
-    return {"status": "deleted"}
+    await db.commit()
+    return {"status": "deleted", "sessions_removed": len(session_ids)}
