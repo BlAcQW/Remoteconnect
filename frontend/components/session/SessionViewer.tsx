@@ -7,6 +7,9 @@ import { RemoteToolbar } from "./RemoteToolbar";
 import { useTechnicianChannel } from "./TechnicianChannel";
 import { HandoffDialog } from "./HandoffDialog";
 import { GuestInviteDialog } from "./GuestInviteDialog";
+import { ShellPanel } from "./ShellPanel";
+import { ProcessListPanel } from "./ProcessListPanel";
+import { FileBrowserPanel } from "./FileBrowserPanel";
 
 type Props = {
   session: Session;
@@ -38,6 +41,9 @@ export function SessionViewer({ session }: Props) {
   const [screenLocked, setScreenLocked] = useState(false);
   const [showHandoff, setShowHandoff] = useState(false);
   const [showGuestInvite, setShowGuestInvite] = useState(false);
+  const [showShell, setShowShell] = useState(false);
+  const [showProcesses, setShowProcesses] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
   const [peerCount, setPeerCount] = useState(1);
   const [idleClosed, setIdleClosed] = useState(false);
 
@@ -249,6 +255,9 @@ export function SessionViewer({ session }: Props) {
           onToggleScreenLock={toggleScreenLock}
           onOpenHandoff={() => setShowHandoff(true)}
           onOpenGuestInvite={() => setShowGuestInvite(true)}
+          onOpenShell={() => setShowShell(true)}
+          onOpenProcesses={() => setShowProcesses(true)}
+          onOpenFiles={() => setShowFiles(true)}
         />
       </div>
 
@@ -264,6 +273,38 @@ export function SessionViewer({ session }: Props) {
       {showGuestInvite ? (
         <GuestInviteDialog sessionId={session.id} onClose={() => setShowGuestInvite(false)} />
       ) : null}
+      {showShell ? (
+        <PanelOverlay onBackdropClick={() => setShowShell(false)}>
+          <ShellPanel onClose={() => setShowShell(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showProcesses ? (
+        <PanelOverlay onBackdropClick={() => setShowProcesses(false)}>
+          <ProcessListPanel onClose={() => setShowProcesses(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showFiles ? (
+        <PanelOverlay onBackdropClick={() => setShowFiles(false)}>
+          <FileBrowserPanel onClose={() => setShowFiles(false)} />
+        </PanelOverlay>
+      ) : null}
+    </div>
+  );
+}
+
+function PanelOverlay({
+  children,
+  onBackdropClick,
+}: {
+  children: React.ReactNode;
+  onBackdropClick: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4"
+      onClick={onBackdropClick}
+    >
+      <div onClick={(e) => e.stopPropagation()}>{children}</div>
     </div>
   );
 }

@@ -41,6 +41,11 @@ TECH_TO_AGENT: frozenset[str] = frozenset(
         "cad_send", "lock_screen", "unlock_screen",
         "input_lock", "input_unlock",
         "wake_lan",
+        # tier A — backstage power tools
+        "shell_run", "shell_cancel",
+        "dir_list",
+        "process_list", "process_kill",
+        "power_action",
     }
 )
 
@@ -52,8 +57,20 @@ AGENT_TO_TECH: frozenset[str] = frozenset(
         "monitor_list", "clipboard_data",
         "consent_required", "consent_granted", "consent_denied",
         "wake_sent", "wake_failed",
+        # tier A — backstage power tools
+        "shell_chunk", "shell_complete",
+        "dir_list_response",
+        "process_list_response", "process_kill_response",
+        "power_action_response",
     }
 )
+
+# Server-side floor for power_action delay_s — prevents instant force-off.
+POWER_ACTION_MIN_DELAY_S = 5
+# Reasonable upper bound for shell_run timeouts.
+SHELL_TIMEOUT_MAX_S = 600
+# Cap shell command length to keep audit logs sane.
+SHELL_COMMAND_MAX_LEN = 4096
 
 # tech → tech (broadcast within a session) — chat + collaborative annotation
 TECH_TO_TECH: frozenset[str] = frozenset({"chat", "annotation_draw", "annotation_clear"})
@@ -143,6 +160,44 @@ async def agent_ws(
                     await audit(db, "wake.sent", machine_id=machine_id, detail={"target": msg.get("mac")})
                 elif t == "wake_failed":
                     await audit(db, "wake.failed", machine_id=machine_id, detail={"error": str(msg.get("reason"))})
+                elif t == "shell_complete":
+                    # Single audit row per shell command, written when the
+                    # agent reports completion. Includes exit_code so a
+                    # security review can see what ran AND whether it
+                    # succeeded without keeping per-chunk noise.
+                    await audit(
+                        db, "machine.shell.run",
+                        machine_id=machine_id, session_id=session_id,
+                        detail={
+                            "request_id": msg.get("request_id"),
+                            "exit_code": msg.get("exit_code"),
+                            "duration_ms": msg.get("duration_ms"),
+                            "error": msg.get("error"),
+                        },
+                    )
+                elif t == "process_kill_response":
+                    await audit(
+                        db, "machine.process.kill",
+                        machine_id=machine_id, session_id=session_id,
+                        detail={
+                            "request_id": msg.get("request_id"),
+                            "pid": msg.get("pid"),
+                            "ok": msg.get("ok"),
+                            "error": msg.get("error"),
+                        },
+                    )
+                elif t == "power_action_response":
+                    await audit(
+                        db, "machine.power",
+                        machine_id=machine_id, session_id=session_id,
+                        detail={
+                            "request_id": msg.get("request_id"),
+                            "verb": msg.get("verb"),
+                            "ok": msg.get("ok"),
+                            "scheduled_at": msg.get("scheduled_at"),
+                            "error": msg.get("error"),
+                        },
+                    )
                 elif t.startswith("file_"):
                     await persist_file_transfer(db, session_id, msg)
 
@@ -308,6 +363,43 @@ async def technician_ws(
                             "reason": f"file too large ({size} > {MAX_TRANSFER_BYTES} bytes)",
                         })
                         continue
+                # ── Tier A guards (server-side) ─────────────────────────────
+                # power_action: enforce a minimum delay so a malicious or
+                # misbehaving frontend can't issue an instant force-down.
+                if t == "power_action":
+                    try:
+                        delay_s = int(data.get("delay_s", POWER_ACTION_MIN_DELAY_S) or 0)
+                    except (TypeError, ValueError):
+                        delay_s = 0
+                    if delay_s < POWER_ACTION_MIN_DELAY_S:
+                        delay_s = POWER_ACTION_MIN_DELAY_S
+                    data["delay_s"] = delay_s
+                    if data.get("verb") not in ("reboot", "shutdown", "logoff"):
+                        await websocket.send_json({
+                            "type": "power_action_response",
+                            "request_id": data.get("request_id"),
+                            "verb": data.get("verb"),
+                            "ok": False,
+                            "error": "invalid verb",
+                        })
+                        continue
+                # shell_run: cap command length and clamp timeout.
+                if t == "shell_run":
+                    cmd = str(data.get("command", ""))
+                    if len(cmd) > SHELL_COMMAND_MAX_LEN:
+                        await websocket.send_json({
+                            "type": "shell_complete",
+                            "request_id": data.get("request_id"),
+                            "exit_code": -1,
+                            "duration_ms": 0,
+                            "error": f"command too long ({len(cmd)} > {SHELL_COMMAND_MAX_LEN})",
+                        })
+                        continue
+                    try:
+                        timeout_s = int(data.get("timeout_s", 60) or 60)
+                    except (TypeError, ValueError):
+                        timeout_s = 60
+                    data["timeout_s"] = max(1, min(SHELL_TIMEOUT_MAX_S, timeout_s))
                 data["session_id"] = session_id
                 await manager.send_to_machine(session.machine_id, data)
             elif t in TECH_TO_TECH:

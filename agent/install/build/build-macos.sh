@@ -91,6 +91,11 @@ fi
   --hidden-import pynput.mouse \
   --hidden-import pynput.keyboard \
   --hidden-import pyperclip \
+  --hidden-import psutil \
+  --hidden-import psutil._psutil_osx \
+  --hidden-import agent.shell_handler \
+  --hidden-import agent.process_inspect \
+  --hidden-import agent.file_browser \
   "${ENTRY}"
 
 # Wrap into a .pkg (signed conditionally)

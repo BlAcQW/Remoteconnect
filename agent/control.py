@@ -153,6 +153,124 @@ def input_locked() -> bool:
     return _input_locked
 
 
+# ── Power actions: reboot / shutdown / log off ────────────────────────────
+def _power_windows(verb: str, delay_s: int, message: str) -> Tuple[bool, str]:
+    """Schedule a power action via shutdown.exe. Customer sees a system
+    notification countdown for `delay_s` seconds before the action fires.
+
+    `shutdown.exe` flag map:
+      reboot   → /r
+      shutdown → /s
+      logoff   → /l    (logoff ignores /t and /c; fires immediately)
+    """
+    import subprocess
+
+    flag_map = {"reboot": "/r", "shutdown": "/s", "logoff": "/l"}
+    flag = flag_map.get(verb)
+    if flag is None:
+        return False, f"unknown verb: {verb}"
+
+    if verb == "logoff":
+        # /t and /c aren't valid with /l — fire immediately.
+        cmd = ["shutdown", flag, "/f"]
+    else:
+        cmd = ["shutdown", flag, "/t", str(int(delay_s)), "/c", message[:255]]
+    try:
+        # CREATE_NO_WINDOW so the customer doesn't see a stray cmd flicker.
+        creationflags = 0x08000000  # CREATE_NO_WINDOW
+        completed = subprocess.run(
+            cmd, capture_output=True, timeout=10, creationflags=creationflags,
+        )
+        if completed.returncode == 0:
+            return True, "scheduled"
+        err = completed.stderr.decode(errors="replace").strip() or completed.stdout.decode(errors="replace").strip()
+        return False, f"shutdown.exe rc={completed.returncode}: {err}"
+    except FileNotFoundError:
+        return False, "shutdown.exe not found"
+    except subprocess.TimeoutExpired:
+        return False, "shutdown.exe timed out"
+
+
+def _power_macos(verb: str, delay_s: int, message: str) -> Tuple[bool, str]:
+    """macOS power via osascript. Sudo-free for the current user, requires
+    the agent to run inside an interactive session (it does, by design)."""
+    import subprocess
+
+    if verb == "reboot":
+        script = 'tell application "System Events" to restart'
+    elif verb == "shutdown":
+        script = 'tell application "System Events" to shut down'
+    elif verb == "logoff":
+        script = 'tell application "System Events" to log out'
+    else:
+        return False, f"unknown verb: {verb}"
+
+    if delay_s > 0:
+        # `osascript` runs immediately; emulate the delay with `sleep` so
+        # the customer experience matches Windows. Backgrounded so the
+        # caller returns quickly.
+        wrapped = f"sleep {int(delay_s)}; osascript -e {repr(script)}"
+        try:
+            subprocess.Popen(["sh", "-c", wrapped + " &"])
+            return True, f"scheduled in {delay_s}s"
+        except Exception as e:
+            return False, f"spawn failed: {e}"
+    try:
+        completed = subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+        if completed.returncode == 0:
+            return True, "scheduled"
+        return False, f"osascript rc={completed.returncode}: {completed.stderr.decode(errors='replace').strip()}"
+    except FileNotFoundError:
+        return False, "osascript not found"
+
+
+def _power_linux(verb: str, delay_s: int, message: str) -> Tuple[bool, str]:
+    """Linux power via systemctl / loginctl. Requires polkit rules for the
+    current user — most distros allow `reboot`/`poweroff` for active session
+    users out of the box; logout is always permitted."""
+    import os as _os
+    import subprocess
+
+    if verb == "reboot":
+        cmd = ["systemctl", "reboot"]
+    elif verb == "shutdown":
+        cmd = ["systemctl", "poweroff"]
+    elif verb == "logoff":
+        user = _os.environ.get("USER") or _os.environ.get("LOGNAME") or ""
+        if not user:
+            return False, "cannot determine current user"
+        cmd = ["loginctl", "terminate-user", user]
+    else:
+        return False, f"unknown verb: {verb}"
+
+    if delay_s > 0:
+        wrapped = "sleep {} && {}".format(int(delay_s), " ".join(cmd))
+        try:
+            subprocess.Popen(["sh", "-c", wrapped + " &"])
+            return True, f"scheduled in {delay_s}s"
+        except Exception as e:
+            return False, f"spawn failed: {e}"
+    try:
+        completed = subprocess.run(cmd, capture_output=True, timeout=10)
+        if completed.returncode == 0:
+            return True, "scheduled"
+        return False, f"{cmd[0]} rc={completed.returncode}: {completed.stderr.decode(errors='replace').strip()}"
+    except FileNotFoundError:
+        return False, f"{cmd[0]} not found"
+
+
+def power_action(verb: str, delay_s: int = 30, message: str = "") -> Tuple[bool, str]:
+    """Schedule reboot/shutdown/logoff on the host OS. Verbs:
+       reboot, shutdown, logoff
+    `delay_s` is honored on Windows natively and emulated via `sleep`
+    elsewhere. Returns (ok, detail) like the other control.* helpers."""
+    if "windows" in OS:
+        return _power_windows(verb, max(0, int(delay_s)), message or "RemoteConnect")
+    if "darwin" in OS:
+        return _power_macos(verb, max(0, int(delay_s)), message or "RemoteConnect")
+    return _power_linux(verb, max(0, int(delay_s)), message or "RemoteConnect")
+
+
 # ── Wake-on-LAN ───────────────────────────────────────────────────────────
 def send_wol(mac: str, broadcast: Optional[str] = None) -> Tuple[bool, str]:
     """Send the magic packet to UDP/9 on the given (or default) broadcast."""

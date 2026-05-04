@@ -27,7 +27,13 @@ type Props = {
   onToggleScreenLock: () => void;
   onOpenHandoff: () => void;
   onOpenGuestInvite: () => void;
+  // Tier A panel openers
+  onOpenShell: () => void;
+  onOpenProcesses: () => void;
+  onOpenFiles: () => void;
 };
+
+type PowerVerb = "reboot" | "shutdown" | "logoff";
 
 export function RemoteToolbar(props: Props) {
   const router = useRouter();
@@ -52,6 +58,28 @@ export function RemoteToolbar(props: Props) {
 
   function sendCad() {
     channel.send({ type: "cad_send" });
+  }
+
+  function powerAction(verb: PowerVerb) {
+    const labels: Record<PowerVerb, string> = {
+      reboot: "Reboot",
+      shutdown: "Shutdown",
+      logoff: "Log off",
+    };
+    if (
+      !window.confirm(
+        `${labels[verb]} the remote machine in 30 seconds?\n\nThe customer will see a warning notification before it happens.`,
+      )
+    )
+      return;
+    const requestId = newRequestId();
+    channel.send({
+      type: "power_action",
+      request_id: requestId,
+      verb,
+      delay_s: 30,
+      message: `RemoteConnect technician requested ${labels[verb].toLowerCase()} in 30 seconds`,
+    });
   }
 
   return (
@@ -95,6 +123,30 @@ export function RemoteToolbar(props: Props) {
       <ToggleButton active={props.inputLocked} onClick={props.onToggleInputLock} title="Block agent from accepting other input" disabled={!props.channelOpen}>
         {props.inputLocked ? "Input locked" : "Lock input"}
       </ToggleButton>
+
+      <Divider />
+
+      <Tiny onClick={props.onOpenShell} disabled={ended || !props.channelOpen} title="Hidden shell (cmd / powershell / bash)">
+        Shell
+      </Tiny>
+      <Tiny onClick={props.onOpenFiles} disabled={ended || !props.channelOpen} title="File browser (browse / download / upload)">
+        Files
+      </Tiny>
+      <Tiny onClick={props.onOpenProcesses} disabled={ended || !props.channelOpen} title="Process list + task killer">
+        Procs
+      </Tiny>
+
+      <Divider />
+
+      <Tiny onClick={() => powerAction("reboot")} disabled={ended || !props.channelOpen} title="Reboot the remote machine in 30s">
+        Reboot
+      </Tiny>
+      <Tiny onClick={() => powerAction("shutdown")} disabled={ended || !props.channelOpen} title="Shut the remote machine down in 30s">
+        Shutdown
+      </Tiny>
+      <Tiny onClick={() => powerAction("logoff")} disabled={ended || !props.channelOpen} title="Log the customer out">
+        Logoff
+      </Tiny>
 
       <Divider />
 
@@ -161,4 +213,11 @@ function Indicator({ on, label }: { on: boolean; label: string }) {
 
 function Divider() {
   return <span className="h-4 w-px bg-border" />;
+}
+
+function newRequestId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }

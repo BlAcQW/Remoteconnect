@@ -54,6 +54,72 @@ def resolve_in_share(filename: str) -> Path | None:
     return target
 
 
+def safe_absolute_path(raw: str | None) -> Path | None:
+    """Normalize a technician-supplied absolute path. Returns the resolved
+    Path or None if it's malformed.
+
+    Why minimal restrictions: the technician already has full screen +
+    keyboard control of the box at this point in the session — they can
+    open Explorer and copy any file out manually. The file browser is
+    a UX shortcut, not a privilege boundary. We still reject the raw
+    Windows extended-length prefix because passing it through to
+    Path.write_bytes / Path.is_file produces inconsistent results.
+    """
+    if raw is None or not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s or "\x00" in s:
+        return None
+    # Reject the raw extended-prefix forms — `\\?\C:\Users\...` is valid
+    # to the OS but trips up Path() on some Python builds. Customers
+    # don't paste these; the UI never produces them.
+    if s.startswith("\\\\?\\") or s.startswith("//?/"):
+        return None
+    try:
+        p = Path(s).resolve(strict=False)
+    except (OSError, ValueError):
+        return None
+    return p
+
+
+def resolve_download_target(filename: str | None, absolute_path: str | None) -> Path | None:
+    """Pick the right resolution for a download request.
+
+    When ``absolute_path`` is supplied the technician is browsing the
+    filesystem (file_browser flow) — use it directly after sanity
+    normalization. Otherwise fall back to the legacy SHARED_DIR-only
+    sandbox so existing callers keep working untouched.
+    """
+    if absolute_path:
+        p = safe_absolute_path(absolute_path)
+        if p is None:
+            return None
+        return p
+    fname = safe_filename(filename)
+    if fname is None:
+        return None
+    return resolve_in_share(fname)
+
+
+def resolve_upload_target(filename: str, dest_path: str | None) -> Path | None:
+    """Pick the right resolution for an upload landing path.
+
+    When ``dest_path`` is supplied (file_browser → "upload here"), drop
+    the file as ``<dest_path>/<filename>``. Otherwise fall back to
+    SHARED_DIR. ``filename`` is always validated as a basename to stop
+    the upload-side path traversal vector regardless of dest_path.
+    """
+    fname = safe_filename(filename)
+    if fname is None:
+        return None
+    if dest_path:
+        d = safe_absolute_path(dest_path)
+        if d is None:
+            return None
+        return d / fname
+    return resolve_in_share(fname)
+
+
 # Type alias for the async send-to-backend callable supplied by the caller.
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -65,6 +131,10 @@ class TransferDispatcher:
         self._assembler = FileAssembler()
         # Sizes/expected counts captured from the upload_start so we can sanity-check chunks.
         self._upload_meta: dict[str, dict[str, int]] = {}
+        # Optional landing directory per upload, captured from upload_start
+        # when the technician uses the file browser to choose a destination.
+        # Cleared on completion, cancel, or rejection.
+        self._upload_dest: dict[str, str] = {}
 
     # ── Inbound (technician → agent) ─────────────────────────────────────────
     async def on_upload_start(self, msg: dict[str, Any], send: SendFn) -> None:
@@ -86,7 +156,13 @@ class TransferDispatcher:
             return
 
         self._upload_meta[filename] = {"size": size, "total": total}
-        log.info("upload_start filename=%s size=%d chunks=%d", filename, size, total)
+        dest = msg.get("dest_path")
+        if isinstance(dest, str) and dest:
+            self._upload_dest[filename] = dest
+        log.info(
+            "upload_start filename=%s size=%d chunks=%d dest=%s",
+            filename, size, total, dest or "<shared>",
+        )
         await send(_ack(session_id, filename, "ok"))
 
     async def on_upload_cancel(self, msg: dict[str, Any], send: SendFn) -> None:
@@ -95,6 +171,7 @@ class TransferDispatcher:
             return
         self._assembler.cancel(filename)
         self._upload_meta.pop(filename, None)
+        self._upload_dest.pop(filename, None)
         log.info("upload_cancel filename=%s", filename)
 
     async def on_chunk_inbound(self, msg: dict[str, Any], send: SendFn) -> None:
@@ -128,11 +205,13 @@ class TransferDispatcher:
             )
             return
 
-        target = resolve_in_share(filename)
+        dest_path = self._upload_dest.pop(filename, None)
+        target = resolve_upload_target(filename, dest_path)
         if target is None:
             await send(_ack(session_id, filename, "rejected", reason="path traversal blocked"))
             return
         try:
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(assembled)
         except OSError as e:
             await send(_ack(session_id, filename, "rejected", reason=f"write failed: {e}"))
@@ -150,29 +229,34 @@ class TransferDispatcher:
         )
 
     async def on_download_request(self, msg: dict[str, Any], send: SendFn) -> None:
-        filename = safe_filename(msg.get("filename"))
         session_id = msg.get("session_id")
-        if filename is None:
+        absolute_path = msg.get("absolute_path")
+        target = resolve_download_target(msg.get("filename"), absolute_path)
+        # Choose what to surface back to the technician as the "filename"
+        # — the basename of the resolved path is the most useful both for
+        # display and for the technician's local "save as" prompt.
+        display_name = (target.name if target else None) or msg.get("filename") or "?"
+        if target is None:
             await send(
                 {
                     "type": "file_download_error",
                     "session_id": session_id,
-                    "filename": msg.get("filename"),
-                    "reason": "invalid filename",
+                    "filename": display_name,
+                    "reason": "invalid path",
                 }
             )
             return
-        target = resolve_in_share(filename)
-        if target is None or not target.is_file():
+        if not target.is_file():
             await send(
                 {
                     "type": "file_download_error",
                     "session_id": session_id,
-                    "filename": filename,
+                    "filename": display_name,
                     "reason": "not found",
                 }
             )
             return
+        filename = display_name
         size = target.stat().st_size
         if size > MAX_TRANSFER_BYTES:
             await send(

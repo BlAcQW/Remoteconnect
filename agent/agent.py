@@ -47,6 +47,12 @@ _streamers: dict[str, asyncio.Task] = {}
 # Cleared only on explicit end_session from backend.
 _active_sessions: dict[str, dict[str, Any]] = {}
 
+# Active shell runs, keyed by request_id, so shell_cancel can target
+# the right subprocess without scanning. Cleared by the run's _driver()
+# via this same dict (see _shell_run_register / _shell_run_done).
+from .shell_handler import ShellRun  # noqa: E402
+_shell_runs: dict[str, ShellRun] = {}
+
 # Binary frame envelope (matches backend signaling.py FRAME_HEADER_LEN=8).
 _FRAME_TYPE_JPEG = 1
 _FRAME_HEADER_LEN = 8
@@ -507,6 +513,146 @@ async def handle_message(msg: dict[str, Any], ws: Any) -> None:
             "type": "wake_sent" if ok else "wake_failed",
             "mac": target,
             "reason": None if ok else detail,
+        }))
+    elif t == "dir_list":
+        request_id = msg.get("request_id")
+        raw_path = msg.get("path")
+        try:
+            from . import file_browser
+            result = await asyncio.to_thread(file_browser.list_dir, raw_path)
+            await ws.send(json.dumps({
+                "type": "dir_list_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "path": result["path"],
+                "entries": result["entries"],
+                "error": result["error"],
+            }))
+        except Exception as e:
+            log.exception("dir_list failed")
+            await ws.send(json.dumps({
+                "type": "dir_list_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "path": str(raw_path or ""),
+                "entries": [],
+                "error": str(e),
+            }))
+    elif t == "shell_run":
+        from . import shell_handler
+
+        request_id = str(msg.get("request_id") or "")
+        shell = str(msg.get("shell") or "")
+        command = str(msg.get("command") or "")
+        try:
+            timeout_s = int(msg.get("timeout_s", 60) or 60)
+        except (TypeError, ValueError):
+            timeout_s = 60
+        if not request_id or not command:
+            await ws.send(json.dumps({
+                "type": "shell_complete",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "exit_code": -1,
+                "duration_ms": 0,
+                "error": "missing request_id or command",
+            }))
+        else:
+            async def _send(payload: dict[str, Any]) -> None:
+                await ws.send(json.dumps(payload))
+
+            handle = await shell_handler.run(
+                request_id=request_id,
+                shell=shell,
+                command=command,
+                timeout_s=timeout_s,
+                session_id=msg.get("session_id"),
+                send=_send,
+            )
+            _shell_runs[request_id] = handle
+
+            def _cleanup(_t: asyncio.Task, rid: str = request_id) -> None:
+                _shell_runs.pop(rid, None)
+            handle.task.add_done_callback(_cleanup)
+    elif t == "shell_cancel":
+        from . import shell_handler
+
+        request_id = str(msg.get("request_id") or "")
+        handle = _shell_runs.get(request_id)
+        if handle:
+            await shell_handler.cancel(handle)
+        # No response — the original run will emit shell_complete with
+        # cancelled=True once its driver returns.
+    elif t == "process_list":
+        request_id = msg.get("request_id")
+        try:
+            from . import process_inspect
+            rows = await asyncio.to_thread(process_inspect.list_processes)
+            await ws.send(json.dumps({
+                "type": "process_list_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "processes": rows,
+                "error": None,
+            }))
+        except Exception as e:
+            log.exception("process_list failed")
+            await ws.send(json.dumps({
+                "type": "process_list_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "processes": [],
+                "error": str(e),
+            }))
+    elif t == "process_kill":
+        request_id = msg.get("request_id")
+        try:
+            pid = int(msg.get("pid", 0))
+        except (TypeError, ValueError):
+            pid = 0
+        force = bool(msg.get("force", False))
+        if pid <= 0:
+            await ws.send(json.dumps({
+                "type": "process_kill_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "pid": pid,
+                "ok": False,
+                "error": "invalid pid",
+            }))
+        else:
+            from . import process_inspect
+            ok, err = await asyncio.to_thread(process_inspect.kill, pid, force)
+            await ws.send(json.dumps({
+                "type": "process_kill_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "pid": pid,
+                "ok": ok,
+                "error": err,
+            }))
+    elif t == "power_action":
+        request_id = msg.get("request_id")
+        verb = str(msg.get("verb", ""))
+        try:
+            delay_s = int(msg.get("delay_s", 30) or 30)
+        except (TypeError, ValueError):
+            delay_s = 30
+        message_text = str(msg.get("message") or "RemoteConnect")
+        log.info("power_action: verb=%s delay_s=%d", verb, delay_s)
+        ok, detail = control.power_action(verb, delay_s, message_text)
+        from datetime import datetime, timezone, timedelta
+        scheduled_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=delay_s)
+        ).isoformat() if ok else None
+        await ws.send(json.dumps({
+            "type": "power_action_response",
+            "request_id": request_id,
+            "session_id": msg.get("session_id"),
+            "verb": verb,
+            "ok": ok,
+            "scheduled_at": scheduled_at,
+            "error": None if ok else detail,
         }))
     elif t in ("file_upload_start", "file_upload_cancel", "file_chunk", "file_download_request"):
         async def _send(payload: dict[str, Any]) -> None:

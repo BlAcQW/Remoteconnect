@@ -5,6 +5,7 @@ Pillow>=10.4.0,<12
 pynput==1.7.6
 pyperclip==1.9.0
 python-dotenv==1.0.1
+psutil>=5.9.0,<7
 # daily-python was removed in v0.2.0. Video is now streamed as MJPEG over
 # the agent's existing WebSocket (see agent.agent.stream_loop). The legacy
 # Daily.co subprocess path in agent.publisher_daily is still callable when
