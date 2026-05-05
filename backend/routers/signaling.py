@@ -46,6 +46,10 @@ TECH_TO_AGENT: frozenset[str] = frozenset(
         "dir_list",
         "process_list", "process_kill",
         "power_action",
+        # tier B — diagnostics + service control
+        "sysinfo_get",
+        "service_list", "service_action",
+        "vitals_subscribe", "vitals_unsubscribe",
     }
 )
 
@@ -62,6 +66,10 @@ AGENT_TO_TECH: frozenset[str] = frozenset(
         "dir_list_response",
         "process_list_response", "process_kill_response",
         "power_action_response",
+        # tier B — diagnostics + service control
+        "sysinfo_response",
+        "service_list_response", "service_action_response",
+        "vitals_tick",
     }
 )
 
@@ -195,6 +203,18 @@ async def agent_ws(
                             "verb": msg.get("verb"),
                             "ok": msg.get("ok"),
                             "scheduled_at": msg.get("scheduled_at"),
+                            "error": msg.get("error"),
+                        },
+                    )
+                elif t == "service_action_response":
+                    await audit(
+                        db, "machine.service",
+                        machine_id=machine_id, session_id=session_id,
+                        detail={
+                            "request_id": msg.get("request_id"),
+                            "service": msg.get("service"),
+                            "verb": msg.get("verb"),
+                            "ok": msg.get("ok"),
                             "error": msg.get("error"),
                         },
                     )

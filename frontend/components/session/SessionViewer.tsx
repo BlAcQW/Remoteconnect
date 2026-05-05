@@ -10,6 +10,9 @@ import { GuestInviteDialog } from "./GuestInviteDialog";
 import { ShellPanel } from "./ShellPanel";
 import { ProcessListPanel } from "./ProcessListPanel";
 import { FileBrowserPanel } from "./FileBrowserPanel";
+import { SystemInfoPanel } from "./SystemInfoPanel";
+import { ServicesPanel } from "./ServicesPanel";
+import { VitalsPanel } from "./VitalsPanel";
 
 type Props = {
   session: Session;
@@ -44,6 +47,9 @@ export function SessionViewer({ session }: Props) {
   const [showShell, setShowShell] = useState(false);
   const [showProcesses, setShowProcesses] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
+  const [showSysInfo, setShowSysInfo] = useState(false);
+  const [showServices, setShowServices] = useState(false);
+  const [showVitals, setShowVitals] = useState(false);
   const [peerCount, setPeerCount] = useState(1);
   const [idleClosed, setIdleClosed] = useState(false);
 
@@ -258,6 +264,9 @@ export function SessionViewer({ session }: Props) {
           onOpenShell={() => setShowShell(true)}
           onOpenProcesses={() => setShowProcesses(true)}
           onOpenFiles={() => setShowFiles(true)}
+          onOpenSysInfo={() => setShowSysInfo(true)}
+          onOpenServices={() => setShowServices(true)}
+          onOpenVitals={() => setShowVitals(true)}
         />
       </div>
 
@@ -286,6 +295,21 @@ export function SessionViewer({ session }: Props) {
       {showFiles ? (
         <PanelOverlay onBackdropClick={() => setShowFiles(false)}>
           <FileBrowserPanel onClose={() => setShowFiles(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showSysInfo ? (
+        <PanelOverlay onBackdropClick={() => setShowSysInfo(false)}>
+          <SystemInfoPanel onClose={() => setShowSysInfo(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showServices ? (
+        <PanelOverlay onBackdropClick={() => setShowServices(false)}>
+          <ServicesPanel onClose={() => setShowServices(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showVitals ? (
+        <PanelOverlay onBackdropClick={() => setShowVitals(false)}>
+          <VitalsPanel onClose={() => setShowVitals(false)} />
         </PanelOverlay>
       ) : null}
     </div>

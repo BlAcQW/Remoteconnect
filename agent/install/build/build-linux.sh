@@ -98,6 +98,9 @@ fi
   --hidden-import agent.shell_handler \
   --hidden-import agent.process_inspect \
   --hidden-import agent.file_browser \
+  --hidden-import agent.sysinfo \
+  --hidden-import agent.service_manager \
+  --hidden-import agent.vitals \
   "${ENTRY}"
 
 echo

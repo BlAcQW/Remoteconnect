@@ -514,6 +514,92 @@ async def handle_message(msg: dict[str, Any], ws: Any) -> None:
             "mac": target,
             "reason": None if ok else detail,
         }))
+    elif t == "sysinfo_get":
+        request_id = msg.get("request_id")
+        try:
+            from . import sysinfo
+            data = await asyncio.to_thread(sysinfo.collect)
+            await ws.send(json.dumps({
+                "type": "sysinfo_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "info": data,
+                "error": None,
+            }))
+        except Exception as e:
+            log.exception("sysinfo_get failed")
+            await ws.send(json.dumps({
+                "type": "sysinfo_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "info": None,
+                "error": str(e),
+            }))
+    elif t == "service_list":
+        request_id = msg.get("request_id")
+        try:
+            from . import service_manager
+            rows = await asyncio.to_thread(service_manager.list_services)
+            await ws.send(json.dumps({
+                "type": "service_list_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "services": rows,
+                "error": None,
+            }))
+        except Exception as e:
+            log.exception("service_list failed")
+            await ws.send(json.dumps({
+                "type": "service_list_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "services": [],
+                "error": str(e),
+            }))
+    elif t == "service_action":
+        request_id = msg.get("request_id")
+        name = str(msg.get("service") or "")
+        verb = str(msg.get("verb") or "")
+        try:
+            from . import service_manager
+            ok, err = await asyncio.to_thread(service_manager.perform_action, name, verb)
+            await ws.send(json.dumps({
+                "type": "service_action_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "service": name,
+                "verb": verb,
+                "ok": ok,
+                "error": err,
+            }))
+        except Exception as e:
+            log.exception("service_action failed name=%s verb=%s", name, verb)
+            await ws.send(json.dumps({
+                "type": "service_action_response",
+                "request_id": request_id,
+                "session_id": msg.get("session_id"),
+                "service": name,
+                "verb": verb,
+                "ok": False,
+                "error": str(e),
+            }))
+    elif t == "vitals_subscribe":
+        from . import vitals as vitals_mod
+
+        try:
+            interval_s = float(msg.get("interval_s", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            interval_s = 1.0
+
+        async def _vitals_send(payload: dict[str, Any]) -> None:
+            await ws.send(json.dumps(payload))
+
+        await vitals_mod.streamer().start(
+            _vitals_send, msg.get("session_id"), interval_s
+        )
+    elif t == "vitals_unsubscribe":
+        from . import vitals as vitals_mod
+        await vitals_mod.streamer().stop()
     elif t == "dir_list":
         request_id = msg.get("request_id")
         raw_path = msg.get("path")

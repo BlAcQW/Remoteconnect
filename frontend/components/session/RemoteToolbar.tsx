@@ -31,6 +31,10 @@ type Props = {
   onOpenShell: () => void;
   onOpenProcesses: () => void;
   onOpenFiles: () => void;
+  // Tier B panel openers
+  onOpenSysInfo: () => void;
+  onOpenServices: () => void;
+  onOpenVitals: () => void;
 };
 
 type PowerVerb = "reboot" | "shutdown" | "logoff";
@@ -134,6 +138,15 @@ export function RemoteToolbar(props: Props) {
       </Tiny>
       <Tiny onClick={props.onOpenProcesses} disabled={ended || !props.channelOpen} title="Process list + task killer">
         Procs
+      </Tiny>
+      <Tiny onClick={props.onOpenSysInfo} disabled={ended || !props.channelOpen} title="System info / device report">
+        Info
+      </Tiny>
+      <Tiny onClick={props.onOpenServices} disabled={ended || !props.channelOpen} title="Services (Windows services / systemd units)">
+        Svcs
+      </Tiny>
+      <Tiny onClick={props.onOpenVitals} disabled={ended || !props.channelOpen} title="Live CPU / memory / disk / net">
+        Vitals
       </Tiny>
 
       <Divider />
