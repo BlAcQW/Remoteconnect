@@ -13,6 +13,12 @@ import { FileBrowserPanel } from "./FileBrowserPanel";
 import { SystemInfoPanel } from "./SystemInfoPanel";
 import { ServicesPanel } from "./ServicesPanel";
 import { VitalsPanel } from "./VitalsPanel";
+import { ScreenCapturePanel } from "./ScreenCapturePanel";
+import { SoundPanel } from "./SoundPanel";
+import { AnnotationPanel } from "./AnnotationPanel";
+import { ToolboxPanel } from "./ToolboxPanel";
+import { StatusPanel } from "./StatusPanel";
+import { LogonSessionPanel } from "./LogonSessionPanel";
 
 type Props = {
   session: Session;
@@ -50,6 +56,12 @@ export function SessionViewer({ session }: Props) {
   const [showSysInfo, setShowSysInfo] = useState(false);
   const [showServices, setShowServices] = useState(false);
   const [showVitals, setShowVitals] = useState(false);
+  const [showScreenCapture, setShowScreenCapture] = useState(false);
+  const [showSound, setShowSound] = useState(false);
+  const [showAnnotation, setShowAnnotation] = useState(false);
+  const [showToolbox, setShowToolbox] = useState(false);
+  const [showStatus, setShowStatus] = useState(false);
+  const [showLogonSession, setShowLogonSession] = useState(false);
   const [peerCount, setPeerCount] = useState(1);
   const [idleClosed, setIdleClosed] = useState(false);
 
@@ -267,6 +279,12 @@ export function SessionViewer({ session }: Props) {
           onOpenSysInfo={() => setShowSysInfo(true)}
           onOpenServices={() => setShowServices(true)}
           onOpenVitals={() => setShowVitals(true)}
+          onOpenScreenCapture={() => setShowScreenCapture(true)}
+          onOpenSound={() => setShowSound(true)}
+          onOpenAnnotation={() => setShowAnnotation(true)}
+          onOpenToolbox={() => setShowToolbox(true)}
+          onOpenStatus={() => setShowStatus(true)}
+          onOpenLogonSession={() => setShowLogonSession(true)}
         />
       </div>
 
@@ -310,6 +328,40 @@ export function SessionViewer({ session }: Props) {
       {showVitals ? (
         <PanelOverlay onBackdropClick={() => setShowVitals(false)}>
           <VitalsPanel onClose={() => setShowVitals(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showScreenCapture ? (
+        <PanelOverlay onBackdropClick={() => setShowScreenCapture(false)}>
+          <ScreenCapturePanel onClose={() => setShowScreenCapture(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showSound ? (
+        <PanelOverlay onBackdropClick={() => setShowSound(false)}>
+          <SoundPanel onClose={() => setShowSound(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showAnnotation ? (
+        <PanelOverlay onBackdropClick={() => setShowAnnotation(false)}>
+          <AnnotationPanel onClose={() => setShowAnnotation(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showToolbox ? (
+        <PanelOverlay onBackdropClick={() => setShowToolbox(false)}>
+          <ToolboxPanel onClose={() => setShowToolbox(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showStatus ? (
+        <PanelOverlay onBackdropClick={() => setShowStatus(false)}>
+          <StatusPanel
+            onClose={() => setShowStatus(false)}
+            channelStatus={channel.status}
+            sessionId={session.id}
+          />
+        </PanelOverlay>
+      ) : null}
+      {showLogonSession ? (
+        <PanelOverlay onBackdropClick={() => setShowLogonSession(false)}>
+          <LogonSessionPanel onClose={() => setShowLogonSession(false)} />
         </PanelOverlay>
       ) : null}
     </div>

@@ -35,15 +35,24 @@ type Props = {
   onOpenSysInfo: () => void;
   onOpenServices: () => void;
   onOpenVitals: () => void;
+  // New panel openers
+  onOpenScreenCapture: () => void;
+  onOpenSound: () => void;
+  onOpenAnnotation: () => void;
+  onOpenToolbox: () => void;
+  onOpenStatus: () => void;
+  onOpenLogonSession: () => void;
 };
 
 type PowerVerb = "reboot" | "shutdown" | "logoff";
+type RebootMode = "normal" | "safe";
 
 export function RemoteToolbar(props: Props) {
   const router = useRouter();
   const channel = useTechnicianChannel();
   const [ending, setEnding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showRebootMenu, setShowRebootMenu] = useState(false);
 
   const ended = props.status === "ended";
 
@@ -64,9 +73,13 @@ export function RemoteToolbar(props: Props) {
     channel.send({ type: "cad_send" });
   }
 
-  function powerAction(verb: PowerVerb) {
+  function sendClipboardKeystrokes() {
+    channel.send({ type: "clipboard_keystroke_send" });
+  }
+
+  function powerAction(verb: PowerVerb, mode: RebootMode = "normal") {
     const labels: Record<PowerVerb, string> = {
-      reboot: "Reboot",
+      reboot: mode === "safe" ? "Reboot to Safe Mode" : "Reboot",
       shutdown: "Shutdown",
       logoff: "Log off",
     };
@@ -81,16 +94,23 @@ export function RemoteToolbar(props: Props) {
       type: "power_action",
       request_id: requestId,
       verb,
+      mode,
       delay_s: 30,
       message: `RemoteConnect technician requested ${labels[verb].toLowerCase()} in 30 seconds`,
     });
+    setShowRebootMenu(false);
+  }
+
+  function promptCredentials(action: "prompt_storage" | "send_screen") {
+    channel.send({ type: "credentials_action", action });
   }
 
   return (
-    <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-surface/95 backdrop-blur px-2 py-1.5 shadow-glow text-xs font-mono uppercase tracking-wider max-w-[640px]">
+    <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-surface/95 backdrop-blur px-2 py-1.5 shadow-glow text-xs font-mono uppercase tracking-wider max-w-[720px]">
       <Indicator on={props.channelOpen} label={props.channelOpen ? "linked" : "offline"} />
       <Divider />
 
+      {/* View */}
       <ToggleButton
         active={!props.viewOnly}
         onClick={props.onToggleViewOnly}
@@ -109,6 +129,7 @@ export function RemoteToolbar(props: Props) {
 
       <Divider />
 
+      {/* Zoom */}
       <ToggleButton active={props.isFullscreen} onClick={props.onToggleFullscreen} title="Fullscreen">
         Full
       </ToggleButton>
@@ -118,8 +139,12 @@ export function RemoteToolbar(props: Props) {
 
       <Divider />
 
+      {/* Essentials */}
       <Tiny onClick={sendCad} disabled={!props.channelOpen} title="Send Ctrl+Alt+Del (Windows agents only, requires elevation)">
         C+A+D
+      </Tiny>
+      <Tiny onClick={sendClipboardKeystrokes} disabled={!props.channelOpen} title="Send clipboard contents as keystrokes to remote">
+        Clip→Keys
       </Tiny>
       <ToggleButton active={props.screenLocked} onClick={props.onToggleScreenLock} title="Lock the remote screen with a privacy overlay" disabled={!props.channelOpen}>
         {props.screenLocked ? "Unblank" : "Blank"}
@@ -128,8 +153,32 @@ export function RemoteToolbar(props: Props) {
         {props.inputLocked ? "Input locked" : "Lock input"}
       </ToggleButton>
 
+      {/* Credentials */}
+      <div className="relative group">
+        <Tiny disabled={!props.channelOpen} onClick={() => {}} title="Manage credentials">
+          Creds ▾
+        </Tiny>
+        <div className="absolute top-full left-0 mt-1 hidden group-hover:flex group-focus-within:flex flex-col z-50 rounded-md border border-border bg-surface/95 backdrop-blur shadow-glow min-w-[10rem]">
+          <button
+            onClick={() => promptCredentials("prompt_storage")}
+            disabled={!props.channelOpen}
+            className="px-3 py-1.5 text-left text-xs text-muted hover:text-gray-200 hover:bg-white/5 transition disabled:opacity-40"
+          >
+            Prompt For Storage
+          </button>
+          <button
+            onClick={() => promptCredentials("send_screen")}
+            disabled={!props.channelOpen}
+            className="px-3 py-1.5 text-left text-xs text-muted hover:text-gray-200 hover:bg-white/5 transition disabled:opacity-40"
+          >
+            Send To Screen
+          </button>
+        </div>
+      </div>
+
       <Divider />
 
+      {/* Tools */}
       <Tiny onClick={props.onOpenShell} disabled={ended || !props.channelOpen} title="Hidden shell (cmd / powershell / bash)">
         Shell
       </Tiny>
@@ -151,9 +200,64 @@ export function RemoteToolbar(props: Props) {
 
       <Divider />
 
-      <Tiny onClick={() => powerAction("reboot")} disabled={ended || !props.channelOpen} title="Reboot the remote machine in 30s">
-        Reboot
+      {/* New panels */}
+      <Tiny onClick={props.onOpenScreenCapture} disabled={ended || !props.channelOpen} title="Screenshot and screen recording">
+        Capture
       </Tiny>
+      <Tiny onClick={props.onOpenSound} disabled={ended || !props.channelOpen} title="Audio mode and device selection">
+        Sound
+      </Tiny>
+      <Tiny onClick={props.onOpenAnnotation} disabled={ended || !props.channelOpen} title="Annotation tools">
+        Draw
+      </Tiny>
+      <Tiny onClick={props.onOpenToolbox} disabled={ended || !props.channelOpen} title="Deploy installer files to remote">
+        Toolbox
+      </Tiny>
+      <Tiny onClick={props.onOpenLogonSession} disabled={ended || !props.channelOpen} title="Select logon session / share desktop">
+        Session
+      </Tiny>
+      <Tiny onClick={props.onOpenStatus} title="Connection status and info">
+        Status
+      </Tiny>
+
+      <Divider />
+
+      {/* Power with reboot-to-safe-mode */}
+      <div className="relative">
+        <div className="flex">
+          <Tiny
+            onClick={() => powerAction("reboot")}
+            disabled={ended || !props.channelOpen}
+            title="Reboot the remote machine in 30s"
+          >
+            Reboot
+          </Tiny>
+          <button
+            disabled={ended || !props.channelOpen}
+            onClick={() => setShowRebootMenu((v) => !v)}
+            title="Reboot options"
+            className="rounded-r-md border border-l-0 border-border text-muted hover:border-accent/50 hover:text-gray-200 transition px-1 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ▾
+          </button>
+        </div>
+        {showRebootMenu && (
+          <div className="absolute top-full left-0 mt-1 z-50 flex flex-col rounded-md border border-border bg-surface/95 backdrop-blur shadow-glow min-w-[10rem]">
+            <button
+              onClick={() => powerAction("reboot", "normal")}
+              className="px-3 py-1.5 text-left text-xs text-muted hover:text-gray-200 hover:bg-white/5 transition"
+            >
+              To Normal Mode
+            </button>
+            <button
+              onClick={() => powerAction("reboot", "safe")}
+              className="px-3 py-1.5 text-left text-xs text-muted hover:text-gray-200 hover:bg-white/5 transition"
+            >
+              To Safe Mode
+            </button>
+          </div>
+        )}
+      </div>
       <Tiny onClick={() => powerAction("shutdown")} disabled={ended || !props.channelOpen} title="Shut the remote machine down in 30s">
         Shutdown
       </Tiny>
