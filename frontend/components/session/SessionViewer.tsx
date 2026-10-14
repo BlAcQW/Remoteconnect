@@ -21,6 +21,7 @@ import { StatusPanel } from "./StatusPanel";
 import { LogonSessionPanel } from "./LogonSessionPanel";
 import { ParticipantsPanel } from "./ParticipantsPanel";
 import { HelperPanel } from "./HelperPanel";
+import { ChatPanel } from "./ChatPanel";
 import type { PrinterMode } from "./RemoteToolbar";
 
 type Props = {
@@ -67,6 +68,7 @@ export function SessionViewer({ session }: Props) {
   const [showLogonSession, setShowLogonSession] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [showHelper, setShowHelper] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   // Essentials extras
   const [wakeLocked, setWakeLocked] = useState(false);
   const [clipboardShared, setClipboardShared] = useState(false);
@@ -321,6 +323,7 @@ export function SessionViewer({ session }: Props) {
           onSetPrinterMode={handleSetPrinterMode}
           onOpenParticipants={() => setShowParticipants(true)}
           onOpenHelper={() => setShowHelper(true)}
+          onOpenChat={() => setShowChat(true)}
         />
       </div>
 
@@ -408,6 +411,11 @@ export function SessionViewer({ session }: Props) {
       {showHelper ? (
         <PanelOverlay onBackdropClick={() => setShowHelper(false)}>
           <HelperPanel onClose={() => setShowHelper(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showChat ? (
+        <PanelOverlay onBackdropClick={() => setShowChat(false)}>
+          <ChatPanel selfEmail={session.technician_id} onClose={() => setShowChat(false)} />
         </PanelOverlay>
       ) : null}
     </div>

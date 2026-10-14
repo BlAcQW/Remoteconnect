@@ -5,7 +5,7 @@ import { useTechnicianChannel } from "./TechnicianChannel";
 
 type Msg = { from: string; text: string; ts: number };
 
-export function ChatPanel({ selfEmail }: { selfEmail: string }) {
+export function ChatPanel({ selfEmail, onClose }: { selfEmail: string; onClose?: () => void }) {
   const channel = useTechnicianChannel();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
@@ -40,8 +40,11 @@ export function ChatPanel({ selfEmail }: { selfEmail: string }) {
 
   return (
     <section className="rounded-lg border border-border bg-surface flex flex-col h-72">
-      <header className="px-4 py-2.5 border-b border-border text-xs font-mono uppercase tracking-wider text-muted">
-        Chat
+      <header className="px-4 py-2.5 border-b border-border text-xs font-mono uppercase tracking-wider text-muted flex items-center justify-between">
+        <span>Chat</span>
+        {onClose && (
+          <button onClick={onClose} className="text-muted hover:text-gray-200 transition leading-none" title="Close">✕</button>
+        )}
       </header>
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-1 text-sm">
         {messages.length === 0 ? (

@@ -52,6 +52,7 @@ type Props = {
   // More panel openers
   onOpenParticipants: () => void;
   onOpenHelper: () => void;
+  onOpenChat: () => void;
 };
 
 export type PrinterMode = "none" | "default" | "all";
@@ -270,6 +271,9 @@ export function RemoteToolbar(props: Props) {
       </Tiny>
       <Tiny onClick={props.onOpenHelper} disabled={ended || !props.channelOpen} title="Helper tools (search provider, lasso, clipboard help)">
         Helper
+      </Tiny>
+      <Tiny onClick={props.onOpenChat} disabled={ended || !props.channelOpen} title="In-session chat with remote participants">
+        Chat
       </Tiny>
 
       <Divider />
