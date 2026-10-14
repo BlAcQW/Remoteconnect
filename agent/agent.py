@@ -27,6 +27,7 @@ from websockets.exceptions import ConnectionClosed
 
 from . import config, control, runtime_state
 from .input_handler import click_mouse, move_mouse, press_key, scroll_mouse, type_text
+from . import participants, wake_lock, clipboard_sync, helper_state, printer_mode, folder_transfer
 from .screen_capture import capture_frame, list_monitors
 from .transfer_handlers import TransferDispatcher
 
@@ -755,6 +756,108 @@ async def handle_message(msg: dict[str, Any], ws: Any) -> None:
                 await _transfers.on_download_request(msg, _send)
         except Exception:
             log.exception("file transfer handler %s failed", t)
+
+    # ── Wake lock ─────────────────────────────────────────────────────────
+    elif t == "wake_lock_acquire":
+        ok = wake_lock.acquire()
+        await ws.send(json.dumps({"type": "wake_lock_state", "active": ok}))
+    elif t == "wake_lock_release":
+        ok = wake_lock.release()
+        await ws.send(json.dumps({"type": "wake_lock_state", "active": False}))
+
+    # ── Participants ──────────────────────────────────────────────────────
+    elif t == "participants_get":
+        await ws.send(json.dumps({
+            "type": "participants_list",
+            "participants": participants.list_all(),
+        }))
+    elif t == "participant_joined":
+        p = msg.get("participant")
+        if isinstance(p, dict):
+            participants.add(p)
+    elif t == "participant_left":
+        pid = msg.get("participant_id")
+        if pid is not None:
+            participants.remove(str(pid))
+
+    # ── Helper (search provider / pointer tool / clipboard help) ─────────
+    elif t == "helper_state_get":
+        await ws.send(json.dumps(helper_state.get_state()))
+    elif t == "helper_provider_set":
+        helper_state.set_provider(str(msg.get("provider", "")))
+        await ws.send(json.dumps(helper_state.get_state()))
+    elif t == "helper_tool_set":
+        helper_state.set_tool(str(msg.get("tool", "")))
+        await ws.send(json.dumps(helper_state.get_state()))
+    elif t == "helper_clipboard_set":
+        enabled = bool(msg.get("enabled", False))
+        changed = helper_state.set_clipboard_help(enabled)
+        if changed:
+            async def _ws_send(payload: dict[str, Any]) -> None:
+                await ws.send(json.dumps(payload))
+            if enabled:
+                clipboard_sync.enable(_ws_send)
+            else:
+                clipboard_sync.disable()
+        await ws.send(json.dumps(helper_state.get_state()))
+
+    # ── Clipboard share (essentials toggle) ───────────────────────────────
+    elif t == "clipboard_share_set":
+        enabled = bool(msg.get("enabled", False))
+        async def _ws_send_clip(payload: dict[str, Any]) -> None:
+            await ws.send(json.dumps(payload))
+        if enabled:
+            clipboard_sync.enable(_ws_send_clip)
+        else:
+            clipboard_sync.disable()
+        await ws.send(json.dumps({"type": "clipboard_share_state", "enabled": enabled}))
+
+    # ── Printer mode ──────────────────────────────────────────────────────
+    elif t == "printer_mode_set":
+        mode = str(msg.get("mode", "none"))
+        ok = printer_mode.set_mode(mode)
+        await ws.send(json.dumps({
+            "type": "printer_mode_state",
+            "mode": printer_mode.get(),
+            "ok":   ok,
+        }))
+
+    # ── Folder transfer ───────────────────────────────────────────────────
+    elif t == "folder_send":
+        path       = str(msg.get("path", ""))
+        request_id = str(msg.get("request_id", ""))
+        async def _ws_send_folder(payload: dict[str, Any]) -> None:
+            await ws.send(json.dumps(payload))
+        asyncio.ensure_future(folder_transfer.send_folder(path, request_id, _ws_send_folder))
+
+    elif t == "folder_receive":
+        async def _ws_send_recv(payload: dict[str, Any]) -> None:
+            await ws.send(json.dumps(payload))
+        await folder_transfer.receive_start(msg, _ws_send_recv)
+
+    elif t == "folder_receive_chunk":
+        async def _ws_send_chunk(payload: dict[str, Any]) -> None:
+            await ws.send(json.dumps(payload))
+        await folder_transfer.receive_chunk(msg, _ws_send_chunk)
+
+    elif t == "receive_folder_get":
+        await ws.send(json.dumps({
+            "type":   "receive_folder_info",
+            "folder": folder_transfer.get_receive_folder(),
+        }))
+
+    elif t == "receive_folder_set":
+        path = str(msg.get("path", ""))
+        ok   = folder_transfer.set_receive_folder(path)
+        await ws.send(json.dumps({
+            "type":   "receive_folder_info",
+            "folder": folder_transfer.get_receive_folder(),
+            "ok":     ok,
+        }))
+
+    elif t == "receive_folder_open":
+        folder_transfer.open_receive_folder()
+
     else:
         log.warning("Unknown message type: %r", t)
 
