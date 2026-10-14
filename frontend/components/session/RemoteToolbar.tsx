@@ -114,6 +114,22 @@ export function RemoteToolbar(props: Props) {
     setShowRebootMenu(false);
   }
 
+  function rebootReconnect(mode: RebootMode) {
+    if (
+      !window.confirm(
+        `Reboot to ${mode === "safe" ? "Safe Mode" : "Normal Mode"} in 30 seconds?\n\nThe agent will reconnect automatically once the machine is back up.`,
+      )
+    )
+      return;
+    channel.send({
+      type: "reboot_reconnect",
+      request_id: newRequestId(),
+      mode,
+      delay_s: 30,
+    });
+    setShowRebootMenu(false);
+  }
+
   function promptCredentials(action: "prompt_storage" | "send_screen") {
     channel.send({ type: "credentials_action", action });
   }
@@ -127,10 +143,10 @@ export function RemoteToolbar(props: Props) {
       <ToggleButton
         active={!props.viewOnly}
         onClick={props.onToggleViewOnly}
-        title={props.viewOnly ? "Switch to control mode" : "Switch to view-only mode"}
+        title={props.viewOnly ? "Resume sending your input to the remote machine" : "Suspend your keyboard and mouse input to the remote machine"}
         disabled={ended}
       >
-        {props.viewOnly ? "View only" : "Control"}
+        {props.viewOnly ? "Input suspended" : "Suspend my input"}
       </ToggleButton>
 
       <ToggleButton active={props.mouseEnabled} onClick={props.onToggleMouse} disabled={ended || props.viewOnly} title="Mouse passthrough">
@@ -162,8 +178,8 @@ export function RemoteToolbar(props: Props) {
       <ToggleButton active={props.screenLocked} onClick={props.onToggleScreenLock} title="Lock the remote screen with a privacy overlay" disabled={!props.channelOpen}>
         {props.screenLocked ? "Unblank" : "Blank"}
       </ToggleButton>
-      <ToggleButton active={props.inputLocked} onClick={props.onToggleInputLock} title="Block agent from accepting other input" disabled={!props.channelOpen}>
-        {props.inputLocked ? "Input locked" : "Lock input"}
+      <ToggleButton active={props.inputLocked} onClick={props.onToggleInputLock} title="Block the remote machine from accepting keyboard and mouse input" disabled={!props.channelOpen}>
+        {props.inputLocked ? "Vic input blocked" : "Block vic input"}
       </ToggleButton>
       <ToggleButton active={props.wakeLocked} onClick={props.onToggleWakeLock} title="Prevent remote machine from sleeping" disabled={!props.channelOpen}>
         {props.wakeLocked ? "Wake locked" : "Wake lock"}
@@ -278,35 +294,35 @@ export function RemoteToolbar(props: Props) {
 
       <Divider />
 
-      {/* Power with reboot-to-safe-mode */}
+      {/* Reboot & Reconnect with mode submenu */}
       <div className="relative">
         <div className="flex">
           <Tiny
-            onClick={() => powerAction("reboot")}
+            onClick={() => rebootReconnect("normal")}
             disabled={ended || !props.channelOpen}
-            title="Reboot the remote machine in 30s"
+            title="Reboot the remote machine and automatically reconnect the session"
           >
-            Reboot
+            Reboot &amp; Reconnect
           </Tiny>
           <button
             disabled={ended || !props.channelOpen}
             onClick={() => setShowRebootMenu((v) => !v)}
-            title="Reboot options"
+            title="Reboot mode"
             className="rounded-r-md border border-l-0 border-border text-muted hover:border-accent/50 hover:text-gray-200 transition px-1 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             ▾
           </button>
         </div>
         {showRebootMenu && (
-          <div className="absolute top-full left-0 mt-1 z-50 flex flex-col rounded-md border border-border bg-surface/95 backdrop-blur shadow-glow min-w-[10rem]">
+          <div className="absolute top-full left-0 mt-1 z-50 flex flex-col rounded-md border border-border bg-surface/95 backdrop-blur shadow-glow min-w-[12rem]">
             <button
-              onClick={() => powerAction("reboot", "normal")}
+              onClick={() => { rebootReconnect("normal"); setShowRebootMenu(false); }}
               className="px-3 py-1.5 text-left text-xs text-muted hover:text-gray-200 hover:bg-white/5 transition"
             >
               To Normal Mode
             </button>
             <button
-              onClick={() => powerAction("reboot", "safe")}
+              onClick={() => { rebootReconnect("safe"); setShowRebootMenu(false); }}
               className="px-3 py-1.5 text-left text-xs text-muted hover:text-gray-200 hover:bg-white/5 transition"
             >
               To Safe Mode

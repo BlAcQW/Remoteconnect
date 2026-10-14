@@ -741,6 +741,52 @@ async def handle_message(msg: dict[str, Any], ws: Any) -> None:
             "scheduled_at": scheduled_at,
             "error": None if ok else detail,
         }))
+    elif t == "reboot_reconnect":
+        # Reboot and automatically reconnect once the machine comes back up.
+        # Steps: ack → schedule reboot (delay_s) → after reboot the agent's
+        # outer ws_session loop reconnects on its own; we just need to notify
+        # the technician that the agent has re-established the session.
+        request_id = msg.get("request_id")
+        mode       = str(msg.get("mode", "normal"))   # "normal" | "safe"
+        try:
+            delay_s = int(msg.get("delay_s", 30) or 30)
+        except (TypeError, ValueError):
+            delay_s = 30
+        verb = "reboot"
+        # Build a safe-mode reboot message if requested
+        message_text = (
+            "RemoteConnect will reboot to Safe Mode and reconnect"
+            if mode == "safe"
+            else "RemoteConnect will reboot and reconnect"
+        )
+        log.info("reboot_reconnect: mode=%s delay_s=%d", mode, delay_s)
+        # On Windows, safe-mode reboot requires bcdedit before shutdown
+        if mode == "safe" and sys.platform == "win32":
+            try:
+                import subprocess as _sp
+                _sp.run(
+                    ["bcdedit", "/set", "{current}", "safeboot", "minimal"],
+                    check=True, capture_output=True,
+                )
+            except Exception as _e:
+                log.warning("bcdedit safeboot failed: %s", _e)
+        ok, detail = control.power_action(verb, delay_s, message_text)
+        from datetime import datetime, timezone, timedelta as _td
+        scheduled_at = (
+            datetime.now(timezone.utc) + _td(seconds=delay_s)
+        ).isoformat() if ok else None
+        await ws.send(json.dumps({
+            "type":         "reboot_reconnect_scheduled",
+            "request_id":   request_id,
+            "mode":         mode,
+            "ok":           ok,
+            "scheduled_at": scheduled_at,
+            "error":        None if ok else detail,
+        }))
+        # The agent process will die when the machine reboots; ws_session's
+        # reconnect loop restarts it automatically once the OS is back up,
+        # and the backend will re-issue start_session on the first successful
+        # WS handshake — no extra polling needed here.
     elif t in ("file_upload_start", "file_upload_cancel", "file_chunk", "file_download_request"):
         async def _send(payload: dict[str, Any]) -> None:
             await ws.send(json.dumps(payload))
