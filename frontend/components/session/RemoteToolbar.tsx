@@ -42,8 +42,19 @@ type Props = {
   onOpenToolbox: () => void;
   onOpenStatus: () => void;
   onOpenLogonSession: () => void;
+  // Essentials extras
+  wakeLocked: boolean;
+  onToggleWakeLock: () => void;
+  clipboardShared: boolean;
+  onToggleClipboardShare: () => void;
+  printerMode: PrinterMode;
+  onSetPrinterMode: (m: PrinterMode) => void;
+  // More panel openers
+  onOpenParticipants: () => void;
+  onOpenHelper: () => void;
 };
 
+export type PrinterMode = "none" | "default" | "all";
 type PowerVerb = "reboot" | "shutdown" | "logoff";
 type RebootMode = "normal" | "safe";
 
@@ -55,6 +66,7 @@ export function RemoteToolbar(props: Props) {
   const [showRebootMenu, setShowRebootMenu] = useState(false);
 
   const ended = props.status === "ended";
+  const [showPrinterMenu, setShowPrinterMenu] = useState(false);
 
   async function onEnd() {
     setError(null);
@@ -152,6 +164,40 @@ export function RemoteToolbar(props: Props) {
       <ToggleButton active={props.inputLocked} onClick={props.onToggleInputLock} title="Block agent from accepting other input" disabled={!props.channelOpen}>
         {props.inputLocked ? "Input locked" : "Lock input"}
       </ToggleButton>
+      <ToggleButton active={props.wakeLocked} onClick={props.onToggleWakeLock} title="Prevent remote machine from sleeping" disabled={!props.channelOpen}>
+        {props.wakeLocked ? "Wake locked" : "Wake lock"}
+      </ToggleButton>
+      <ToggleButton active={props.clipboardShared} onClick={props.onToggleClipboardShare} title="Share clipboard between host and remote" disabled={!props.channelOpen}>
+        {props.clipboardShared ? "Clip shared" : "Share clip"}
+      </ToggleButton>
+
+      {/* Printers */}
+      <div className="relative">
+        <button
+          disabled={!props.channelOpen}
+          onClick={() => setShowPrinterMenu((v) => !v)}
+          title="Printer sharing mode"
+          className="rounded-md border border-border text-muted hover:border-accent/50 hover:text-gray-200 transition px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-mono uppercase tracking-wider"
+        >
+          {props.printerMode === "none" ? "No Printer" : props.printerMode === "default" ? "Dflt Printer" : "All Printers"} ▾
+        </button>
+        {showPrinterMenu && (
+          <div className="absolute top-full left-0 mt-1 z-50 flex flex-col rounded-md border border-border bg-surface/95 backdrop-blur shadow-glow min-w-[10rem]">
+            {(["none", "default", "all"] as PrinterMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => { props.onSetPrinterMode(m); setShowPrinterMenu(false); }}
+                className={
+                  "px-3 py-1.5 text-left text-xs transition hover:bg-white/5 " +
+                  (props.printerMode === m ? "text-accent" : "text-muted hover:text-gray-200")
+                }
+              >
+                {m === "none" ? "No Printer" : m === "default" ? "Default Printer" : "All Printers"}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Credentials */}
       <div className="relative group">
@@ -218,6 +264,12 @@ export function RemoteToolbar(props: Props) {
       </Tiny>
       <Tiny onClick={props.onOpenStatus} title="Connection status and info">
         Status
+      </Tiny>
+      <Tiny onClick={props.onOpenParticipants} title="Connected participants">
+        People
+      </Tiny>
+      <Tiny onClick={props.onOpenHelper} disabled={ended || !props.channelOpen} title="Helper tools (search provider, lasso, clipboard help)">
+        Helper
       </Tiny>
 
       <Divider />

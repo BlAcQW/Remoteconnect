@@ -60,6 +60,11 @@ function formatTime(t: number | null): string {
 
 export function FileBrowserPanel({ onClose }: { onClose: () => void }) {
   const channel = useTechnicianChannel();
+  const [tab, setTab] = useState<"browse" | "transfer">("browse");
+  const [receiveFolder, setReceiveFolder] = useState("");
+  const [showReceiveFolderInput, setShowReceiveFolderInput] = useState(false);
+  const [receiveFolderDraft, setReceiveFolderDraft] = useState("");
+  const [transferStatus, setTransferStatus] = useState<string | null>(null);
   const [path, setPath] = useState<string>("drives:");
   const [pendingPath, setPendingPath] = useState<string>("drives:");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -89,6 +94,17 @@ export function FileBrowserPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     return channel.subscribe((m) => {
+      if (m.type === "receive_folder_info") {
+        if (m.folder) setReceiveFolder(String(m.folder));
+      }
+      if (m.type === "folder_transfer_result") {
+        if (m.ok) {
+          setTransferStatus(`Done: ${m.name ?? "transfer complete"}`);
+        } else {
+          setTransferStatus(`Failed: ${m.reason ?? "unknown error"}`);
+        }
+        setTimeout(() => setTransferStatus(null), 4000);
+      }
       if (m.type === "dir_list_response") {
         const rid = String(m.request_id ?? "");
         if (rid !== lastRequestRef.current) return;
@@ -146,8 +162,30 @@ export function FileBrowserPanel({ onClose }: { onClose: () => void }) {
   // Auto-fetch top level on mount.
   useEffect(() => {
     navigate("drives:");
+    if (channel.status === "open") {
+      channel.send({ type: "receive_folder_get" });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function sendFolder() {
+    channel.send({ type: "folder_send" });
+  }
+
+  function receiveFiles() {
+    channel.send({ type: "folder_receive" });
+  }
+
+  function openReceiveFolder() {
+    channel.send({ type: "receive_folder_open" });
+  }
+
+  function applyReceiveFolder() {
+    const folder = receiveFolderDraft.trim();
+    setReceiveFolder(folder);
+    channel.send({ type: "receive_folder_set", folder });
+    setShowReceiveFolderInput(false);
+  }
 
   function onEntryClick(e: Entry) {
     if (e.kind === "file") {
@@ -202,6 +240,111 @@ export function FileBrowserPanel({ onClose }: { onClose: () => void }) {
           ×
         </button>
       </header>
+
+      {/* Tab bar */}
+      <div className="flex border-b border-border">
+        {(["browse", "transfer"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={
+              "flex-1 px-3 py-2 text-xs font-mono uppercase tracking-wider transition " +
+              (tab === t
+                ? "border-b-2 border-accent text-accent"
+                : "text-muted hover:text-gray-200")
+            }
+          >
+            {t === "browse" ? "Browse" : "Transfer"}
+          </button>
+        ))}
+      </div>
+
+      {/* Transfer tab */}
+      {tab === "transfer" && (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="space-y-2">
+            <p className="text-xs text-muted font-mono uppercase tracking-wider">Send</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => channel.send({ type: "file_send_dialog" })}
+                disabled={channel.status !== "open"}
+                className="flex-1 rounded-md border border-border text-xs text-muted px-2 py-1.5 hover:border-accent/50 hover:text-gray-200 transition disabled:opacity-40"
+              >
+                Send Files
+              </button>
+              <button
+                onClick={sendFolder}
+                disabled={channel.status !== "open"}
+                className="flex-1 rounded-md border border-border text-xs text-muted px-2 py-1.5 hover:border-accent/50 hover:text-gray-200 transition disabled:opacity-40"
+              >
+                Send Folder
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs text-muted font-mono uppercase tracking-wider">Receive</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => channel.send({ type: "file_receive_dialog" })}
+                disabled={channel.status !== "open"}
+                className="flex-1 rounded-md border border-border text-xs text-muted px-2 py-1.5 hover:border-accent/50 hover:text-gray-200 transition disabled:opacity-40"
+              >
+                Receive Files
+              </button>
+              <button
+                onClick={receiveFiles}
+                disabled={channel.status !== "open"}
+                className="flex-1 rounded-md border border-border text-xs text-muted px-2 py-1.5 hover:border-accent/50 hover:text-gray-200 transition disabled:opacity-40"
+              >
+                Receive Folder
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-xs text-muted font-mono uppercase tracking-wider">Receive Folder</p>
+            {receiveFolder && (
+              <p className="text-xs font-mono text-gray-400 truncate">{receiveFolder}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={openReceiveFolder}
+                disabled={channel.status !== "open"}
+                className="flex-1 rounded-md border border-border text-xs text-muted px-2 py-1.5 hover:border-accent/50 hover:text-gray-200 transition disabled:opacity-40"
+              >
+                Open Folder
+              </button>
+              <button
+                onClick={() => { setReceiveFolderDraft(receiveFolder); setShowReceiveFolderInput(true); }}
+                disabled={channel.status !== "open"}
+                className="flex-1 rounded-md border border-border text-xs text-muted px-2 py-1.5 hover:border-accent/50 hover:text-gray-200 transition disabled:opacity-40"
+              >
+                Change Folder
+              </button>
+            </div>
+            {showReceiveFolderInput && (
+              <div className="flex gap-2">
+                <input
+                  value={receiveFolderDraft}
+                  onChange={(e) => setReceiveFolderDraft(e.target.value)}
+                  placeholder="/path/to/receive"
+                  className="flex-1 rounded-md bg-bg border border-border px-2 py-1 text-xs focus:border-accent focus:outline-none"
+                />
+                <button onClick={applyReceiveFolder} className="rounded-md border border-accent/40 text-accent px-2 py-1 text-xs">Set</button>
+                <button onClick={() => setShowReceiveFolderInput(false)} className="text-muted text-xs px-1">✕</button>
+              </div>
+            )}
+          </div>
+
+          {transferStatus && (
+            <p className="text-xs text-accent border border-accent/30 bg-accent/10 rounded px-2 py-1">{transferStatus}</p>
+          )}
+        </div>
+      )}
+
+      {/* Browse tab */}
+      {tab === "browse" && <>
       <div className="px-3 py-2 border-b border-border flex gap-2 items-center">
         <button
           onClick={onUp}
@@ -288,6 +431,7 @@ export function FileBrowserPanel({ onClose }: { onClose: () => void }) {
           </table>
         )}
       </div>
+      </>}
     </section>
   );
 }

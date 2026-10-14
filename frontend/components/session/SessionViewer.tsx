@@ -19,6 +19,9 @@ import { AnnotationPanel } from "./AnnotationPanel";
 import { ToolboxPanel } from "./ToolboxPanel";
 import { StatusPanel } from "./StatusPanel";
 import { LogonSessionPanel } from "./LogonSessionPanel";
+import { ParticipantsPanel } from "./ParticipantsPanel";
+import { HelperPanel } from "./HelperPanel";
+import type { PrinterMode } from "./RemoteToolbar";
 
 type Props = {
   session: Session;
@@ -62,6 +65,12 @@ export function SessionViewer({ session }: Props) {
   const [showToolbox, setShowToolbox] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
   const [showLogonSession, setShowLogonSession] = useState(false);
+  const [showParticipants, setShowParticipants] = useState(false);
+  const [showHelper, setShowHelper] = useState(false);
+  // Essentials extras
+  const [wakeLocked, setWakeLocked] = useState(false);
+  const [clipboardShared, setClipboardShared] = useState(false);
+  const [printerMode, setPrinterMode] = useState<PrinterMode>("none");
   const [peerCount, setPeerCount] = useState(1);
   const [idleClosed, setIdleClosed] = useState(false);
 
@@ -94,6 +103,25 @@ export function SessionViewer({ session }: Props) {
       return next;
     });
   }
+  function toggleWakeLock() {
+    setWakeLocked((v) => {
+      const next = !v;
+      channel.send({ type: next ? "wake_lock_acquire" : "wake_lock_release" });
+      return next;
+    });
+  }
+  function toggleClipboardShare() {
+    setClipboardShared((v) => {
+      const next = !v;
+      channel.send({ type: "clipboard_share_set", enabled: next });
+      return next;
+    });
+  }
+  function handleSetPrinterMode(mode: PrinterMode) {
+    setPrinterMode(mode);
+    channel.send({ type: "printer_mode_set", mode });
+  }
+
   function toggleScreenLock() {
     setScreenLocked((v) => {
       const next = !v;
@@ -285,6 +313,14 @@ export function SessionViewer({ session }: Props) {
           onOpenToolbox={() => setShowToolbox(true)}
           onOpenStatus={() => setShowStatus(true)}
           onOpenLogonSession={() => setShowLogonSession(true)}
+          wakeLocked={wakeLocked}
+          onToggleWakeLock={toggleWakeLock}
+          clipboardShared={clipboardShared}
+          onToggleClipboardShare={toggleClipboardShare}
+          printerMode={printerMode}
+          onSetPrinterMode={handleSetPrinterMode}
+          onOpenParticipants={() => setShowParticipants(true)}
+          onOpenHelper={() => setShowHelper(true)}
         />
       </div>
 
@@ -362,6 +398,16 @@ export function SessionViewer({ session }: Props) {
       {showLogonSession ? (
         <PanelOverlay onBackdropClick={() => setShowLogonSession(false)}>
           <LogonSessionPanel onClose={() => setShowLogonSession(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showParticipants ? (
+        <PanelOverlay onBackdropClick={() => setShowParticipants(false)}>
+          <ParticipantsPanel onClose={() => setShowParticipants(false)} />
+        </PanelOverlay>
+      ) : null}
+      {showHelper ? (
+        <PanelOverlay onBackdropClick={() => setShowHelper(false)}>
+          <HelperPanel onClose={() => setShowHelper(false)} />
         </PanelOverlay>
       ) : null}
     </div>
