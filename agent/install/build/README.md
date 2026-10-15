@@ -89,14 +89,46 @@ or in GitHub Actions — they're just exposed as Actions secrets in CI.
 
 ### Windows
 
-Buy a code-signing certificate from Sectigo / DigiCert / GlobalSign.
+#### Dev builds — self-signed cert (no money, no CA)
+
+`make-dev-cert.ps1` generates a self-signed Authenticode cert and wires
+it into the signing flow automatically:
+
+```powershell
+# One-time: create the cert and set env vars for this session
+.\make-dev-cert.ps1
+
+# Then build — the exe will be signed
+.\build-windows.ps1
+```
+
+The cert lives in `Cert:\CurrentUser\My`. Its thumbprint is printed when
+it's created; you can also sign by thumbprint instead of a .pfx:
+
+```powershell
+$env:WINDOWS_CODESIGN_THUMBPRINT = "<thumbprint from make-dev-cert output>"
+.\build-windows.ps1
+```
+
+To suppress SmartScreen on *your own machine* (not customers'), run once
+from an elevated prompt:
+
+```powershell
+.\make-dev-cert.ps1 -InstallTrusted
+```
+
+**Note:** `dotnet dev-certs https` (the ASP.NET HTTPS dev cert) is a
+*TLS* cert — wrong EKU, signtool rejects it. `make-dev-cert.ps1` creates
+a proper *CodeSigning* cert (`Type = CodeSigning` → EKU 1.3.6.1.5.5.7.3.3).
+
+#### Production — buy a cert from a trusted CA
 
 | Type | Cost/yr | What you get |
 |---|---|---|
 | OV (Organization Validated) | $200-400 | Removes warning after reputation builds (~1000s of downloads) |
 | EV (Extended Validation) | $300-700 | Skips warning immediately; cert lives on a hardware token |
 
-**Local build:**
+**Local build with .pfx:**
 ```powershell
 $env:WINDOWS_CODESIGN_CERT = "C:\path\to\cert.pfx"
 $env:WINDOWS_CODESIGN_PASS = "<pfx-password>"
@@ -108,8 +140,10 @@ $env:WINDOWS_CODESIGN_PASS = "<pfx-password>"
 the cert into a temp file before invoking the build.
 
 The `sign-windows.ps1` script wraps `signtool sign` with sensible
-defaults (SHA-256, DigiCert timestamp). Requires `signtool.exe` on PATH
-(install Windows SDK locally; pre-installed on `windows-latest` runners).
+defaults (SHA-256, DigiCert timestamp). Supports both PFX and cert-store
+(thumbprint) modes. Requires `signtool.exe` — pre-installed on
+`windows-latest` runners; locally install Windows SDK:
+`winget install Microsoft.WindowsSDK.10.0.22621`.
 
 ### macOS
 
